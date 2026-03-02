@@ -1,0 +1,59 @@
+{
+  "id": "sharecrm",
+  "name": "ShareCRM Channel",
+  "version": "1.0.0",
+  "description": "ShareCRM 内部 IM 渠道插件，通过 ShareCRM-IM-Gateway 接入",
+  "author": "fxiaoke",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true
+      },
+      "gatewayUrl": {
+        "type": "string"
+      },
+      "appId": {
+        "type": "string"
+      },
+      "appSecret": {
+        "type": "string"
+      },
+      "dmPolicy": {
+        "type": "string",
+        "enum": ["open", "pairing", "allowlist"],
+        "default": "pairing"
+      },
+      "allowFrom": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": []
+      },
+      "groupPolicy": {
+        "type": "string",
+        "enum": ["open", "allowlist", "disabled"],
+        "default": "allowlist"
+      },
+      "groupAllowFrom": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": []
+      }
+    },
+    "required": ["gatewayUrl", "appId", "appSecret"]
+  },
+  "uiHints": {
+    "enabled": { "label": "启用" },
+    "gatewayUrl": { "label": "Gateway 地址", "placeholder": "ws://localhost:8099/ws/gateway" },
+    "appId": { "label": "应用 ID" },
+    "appSecret": { "label": "应用密钥", "sensitive": true },
+    "dmPolicy": { "label": "私聊策略" },
+    "allowFrom": { "label": "私聊白名单" },
+    "groupPolicy": { "label": "群聊策略" },
+    "groupAllowFrom": { "label": "群聊白名单" }
+  }
+}

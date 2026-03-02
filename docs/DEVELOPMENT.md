@@ -1,60 +1,104 @@
 # 开发文档
 
-## 开发环境安装
+## 在 OpenClaw 中安装插件
 
-### 基于 Git 拉取测试（推荐）
-
-在 OpenClaw 服务器上通过 Git 拉取插件进行测试：
+### 方式一：通过 Git 安装（推荐）
 
 ```bash
-# 1. 克隆插件仓库到 OpenClaw 服务器
-cd /path/to/openclaw-server
-git clone <仓库地址> ./plugins/sharecrm-ai-bot
+# 1. 克隆插件到 OpenClaw extensions 目录
+git clone https://github.com/scutken/openclaw-sharecrm ~/.openclaw/extensions/sharecrm
 
-# 2. 编译插件
-cd ./plugins/sharecrm-ai-bot/openclaw-sharecrm
+# 2. 安装依赖并编译
+cd ~/.openclaw/extensions/sharecrm
 npm install
 npm run build
 
-# 3. 在 OpenClaw 项目中添加本地依赖
-# 编辑 package.json
-{
-  "dependencies": {
-    "openclaw-sharecrm": "file:./plugins/sharecrm-ai-bot/openclaw-sharecrm"
-  }
-}
-
-# 4. 安装依赖
-cd /path/to/openclaw-server
-npm install
-
-# 5. 重启 OpenClaw 服务
+# 3. 重启 OpenClaw Gateway
+openclaw gateway restart
 ```
 
-### 更新插件
+### 方式二：使用 OpenClaw CLI 链接安装
 
 ```bash
+# 1. 克隆到任意目录
+git clone https://github.com/scutken/openclaw-sharecrm ~/plugins/sharecrm
+
+# 2. 安装依赖并编译
+cd ~/plugins/sharecrm
+npm install
+npm run build
+
+# 3. 使用 link 模式安装（不复制文件，便于开发）
+openclaw plugins install -l ~/plugins/sharecrm
+
+# 4. 重启 Gateway
+openclaw gateway restart
+```
+
+### 方式三：本地路径安装
+
+```bash
+# 复制插件到 extensions 目录
+openclaw plugins install ~/plugins/sharecrm
+
+# 重启 Gateway
+openclaw gateway restart
+```
+
+---
+
+## 更新插件
+
+```bash
+# 进入插件目录
+cd ~/.openclaw/extensions/sharecrm
+
 # 拉取最新代码
-cd ./plugins/sharecrm-ai-bot
 git pull
 
 # 重新编译
-cd openclaw-sharecrm
 npm run build
 
-# 重启 OpenClaw 服务
+# 重启 Gateway
+openclaw gateway restart
 ```
 
-### npm link 方式（本地开发）
+---
+
+## 配置插件
+
+在 `~/.openclaw/openclaw.json` 中添加配置：
+
+```json5
+{
+  channels: {
+    sharecrm: {
+      enabled: true,
+      gatewayUrl: "ws://localhost:8099/ws/gateway",
+      appId: "your-app-id",
+      appSecret: "your-app-secret",
+      dmPolicy: "pairing",
+      allowFrom: [],
+      groupPolicy: "allowlist",
+      groupAllowFrom: []
+    }
+  }
+}
+```
+
+---
+
+## 验证安装
 
 ```bash
-# 在插件目录创建全局链接
-cd openclaw-sharecrm
-npm link
+# 查看已安装插件
+openclaw plugins list
 
-# 在 OpenClaw 项目中链接
-cd <openclaw项目>
-npm link openclaw-sharecrm
+# 查看插件信息
+openclaw plugins info sharecrm
+
+# 检查插件状态
+openclaw plugins doctor
 ```
 
 ---
