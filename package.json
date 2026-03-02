@@ -22,21 +22,7 @@
   "author": "fxiaoke",
   "license": "MIT",
   "openclaw": {
-    "extensions": ["./dist/index.js"],
-    "channel": {
-      "id": "sharecrm",
-      "label": "ShareCRM",
-      "selectionLabel": "ShareCRM (内部 IM)",
-      "docsPath": "/channels/sharecrm",
-      "docsLabel": "sharecrm",
-      "blurb": "内部 ShareCRM 渠道，通过 ShareCRM-IM-Gateway 接入。",
-      "order": 80
-    },
-    "install": {
-      "npmSpec": "openclaw-sharecrm",
-      "gitUrl": "git@github.com:scutken/openclaw-sharecrm.git",
-      "defaultChoice": "git"
-    }
+    "extensions": ["./index.ts"]
   },
   "dependencies": {
     "ws": "^8.16.0"
