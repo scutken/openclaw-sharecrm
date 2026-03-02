@@ -6,6 +6,9 @@ import type { ResolvedShareCrmAccount } from './src/types.js';
 import { startAccountMonitor, stopAccountMonitor } from './src/monitor.js';
 import { setShareCrmRuntime, type PluginRuntime } from './src/runtime.js';
 
+// 保存 api 引用
+let pluginApi: OpenClawPluginApi | null = null;
+
 /**
  * ShareCRM Channel Plugin 定义
  */
@@ -77,21 +80,26 @@ const shareCrmChannelPlugin = {
   gateway: {
     startAccount: async (
       cfg: any,
-      runtime: PluginRuntime,
+      _runtime: any,
       abortSignal: AbortSignal,
       accountId?: string
     ): Promise<void> => {
+      // 使用 pluginApi.runtime 而不是传入的 runtime
+      const runtime: PluginRuntime = {
+        logger: pluginApi?.logger ?? console,
+      };
       setShareCrmRuntime(runtime);
 
       const account = shareCrmChannelPlugin.config.resolveAccount(cfg, accountId);
+      const log = runtime.logger;
 
       if (!account.enabled) {
-        runtime.logger.info(`[ShareCRM] 账号 ${account.accountId} 未启用`);
+        log.info(`[ShareCRM] 账号 ${account.accountId} 未启用`);
         return;
       }
 
       if (!account.configured) {
-        runtime.logger.warn(`[ShareCRM] 账号 ${account.accountId} 配置不完整，需要 gatewayUrl, appId, appSecret`);
+        log.warn(`[ShareCRM] 账号 ${account.accountId} 配置不完整，需要 gatewayUrl, appId, appSecret`);
         return;
       }
 
@@ -119,7 +127,7 @@ const pluginConfigSchema = {
  * OpenClaw Plugin API 类型
  */
 interface OpenClawPluginApi {
-  runtime: PluginRuntime;
+  runtime?: any;
   logger: Console;
   registerChannel: (opts: { plugin: typeof shareCrmChannelPlugin }) => void;
 }
@@ -134,10 +142,15 @@ const plugin = {
   configSchema: pluginConfigSchema,
 
   register(api: OpenClawPluginApi): void {
-    setShareCrmRuntime(api.runtime);
-    api.logger.info('[ShareCRM] 插件加载中...');
+    pluginApi = api;
+    const log = api.logger ?? console;
+    
+    // 设置 runtime
+    setShareCrmRuntime({ logger: log });
+    
+    log.info('[ShareCRM] 插件加载中...');
     api.registerChannel({ plugin: shareCrmChannelPlugin });
-    api.logger.info('[ShareCRM] Channel 已注册');
+    log.info('[ShareCRM] Channel 已注册');
   },
 };
 
