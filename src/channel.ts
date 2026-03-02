@@ -96,23 +96,28 @@ const shareCrmChannel = {
 
   gateway: {
     startAccount: async (
-      cfg: Record<string, unknown>,
-      runtime: PluginRuntime,
-      abortSignal: AbortSignal,
-      accountId?: string
+      params: {
+        cfg: Record<string, unknown>;
+        runtime: PluginRuntime;
+        abortSignal: AbortSignal;
+        accountId?: string;
+      }
     ): Promise<void> => {
+      const { cfg, runtime, abortSignal, accountId } = params;
+      const logger = runtime?.logger ?? console;
+      
       setShareCrmRuntime(runtime);
 
       const account = shareCrmChannel.config.resolveAccount(cfg, accountId);
       currentAccount = account;
 
       if (!account.enabled) {
-        runtime.logger.info(`[ShareCRM] 账号 ${account.accountId} 未启用`);
+        logger.info(`[ShareCRM] 账号 ${account.accountId} 未启用`);
         return;
       }
 
       if (!account.configured) {
-        runtime.logger.warn(`[ShareCRM] 账号 ${account.accountId} 配置不完整，需要 gatewayUrl 和 botToken`);
+        logger.warn(`[ShareCRM] 账号 ${account.accountId} 配置不完整，需要 gatewayUrl 和 botToken`);
         return;
       }
 
@@ -120,25 +125,25 @@ const shareCrmChannel = {
       client = new ShareCrmClient({
         gatewayUrl: account.gatewayUrl,
         botToken: account.botToken,
-        logger: runtime.logger,
+        logger: logger,
 
         onMessage: (event) => {
           handleInboundMessage(event, account, cfg);
         },
 
         onConnected: (info) => {
-          runtime.logger.info(`[ShareCRM] 已连接: ${info.result?.bot_name ?? "Bot"}`);
+          logger.info(`[ShareCRM] 已连接: ${info.result?.bot_name ?? "Bot"}`);
         },
 
         onDisconnected: (reason) => {
-          runtime.logger.warn(`[ShareCRM] 连接断开: ${reason}，3秒后重连`);
+          logger.warn(`[ShareCRM] 连接断开: ${reason}，3秒后重连`);
           if (!abortSignal.aborted) {
             setTimeout(() => client?.connect(), 3000);
           }
         },
 
         onError: (error) => {
-          runtime.logger.error(`[ShareCRM] 错误: ${error.message}`);
+          logger.error(`[ShareCRM] 错误: ${error.message}`);
         },
       });
 
@@ -147,7 +152,7 @@ const shareCrmChannel = {
 
       // 处理中止信号
       abortSignal.addEventListener("abort", () => {
-        runtime.logger.info(`[ShareCRM] 收到中止信号，断开连接`);
+        logger.info(`[ShareCRM] 收到中止信号，断开连接`);
         client?.disconnect();
         client = null;
         currentAccount = null;
