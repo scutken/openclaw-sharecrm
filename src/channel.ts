@@ -106,6 +106,13 @@ const shareCrmChannel = {
       const { cfg, runtime, abortSignal, accountId } = params;
       const logger = runtime?.logger ?? console;
       
+      // 先断开现有连接（防止 auto-restart 导致重复连接）
+      if (client) {
+        logger.info(`[ShareCRM] 清理现有连接...`);
+        client.disconnect();
+        client = null;
+      }
+      
       setShareCrmRuntime(runtime);
 
       const account = shareCrmChannel.config.resolveAccount(cfg, accountId);
@@ -150,12 +157,15 @@ const shareCrmChannel = {
       // 建立连接
       client.connect();
 
-      // 处理中止信号
-      abortSignal.addEventListener("abort", () => {
-        logger.info(`[ShareCRM] 收到中止信号，断开连接`);
-        client?.disconnect();
-        client = null;
-        currentAccount = null;
+      // 等待中止信号（保持 channel 活跃）
+      await new Promise<void>((resolve) => {
+        abortSignal.addEventListener("abort", () => {
+          logger.info(`[ShareCRM] 收到中止信号，断开连接`);
+          client?.disconnect();
+          client = null;
+          currentAccount = null;
+          resolve();
+        });
       });
     },
 
