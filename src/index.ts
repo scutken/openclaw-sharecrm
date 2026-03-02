@@ -29,7 +29,7 @@ export type {
 export { MessageType, PROTOCOL_VERSION, DEFAULT_CONNECTION_CONFIG } from './types.js';
 
 // 客户端导出
-export { ShareCrmClient, type ShareCrmClientOptions } from './client.js';
+export { ShareCrmClient, testConnection, type ShareCrmClientOptions, type TestConnectionResult } from './client.js';
 
 // 账号管理导出
 export {

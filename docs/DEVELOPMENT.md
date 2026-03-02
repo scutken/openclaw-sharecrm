@@ -103,6 +103,34 @@ openclaw plugins doctor
 
 ---
 
+## 测试连接
+
+### 编程方式
+
+```typescript
+import { testConnection } from 'openclaw-sharecrm';
+
+const result = await testConnection('ws://localhost:8099/ws/gateway');
+
+if (result.success) {
+  console.log(`连接成功，延迟: ${result.latencyMs}ms`);
+} else {
+  console.error(`连接失败: ${result.error}`);
+}
+```
+
+### 命令行测试
+
+```bash
+# 测试 Gateway 健康检查
+curl http://localhost:8099/api/ping
+
+# 预期响应
+# {"status":"ok","service":"sharecrm-im-gateway","timestamp":1709345678000}
+```
+
+---
+
 ## 编程接口
 
 ### 导入

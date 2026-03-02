@@ -27,6 +27,68 @@ export interface ShareCrmClientOptions {
   logger?: Console;
 }
 
+export interface TestConnectionResult {
+  success: boolean;
+  service?: string;
+  timestamp?: number;
+  error?: string;
+  latencyMs?: number;
+}
+
+/**
+ * 测试 Gateway 网络连通性
+ * @param gatewayUrl WebSocket URL (ws://host:port/ws/gateway)
+ * @param timeoutMs 超时时间（默认 5000ms）
+ */
+export async function testConnection(
+  gatewayUrl: string,
+  timeoutMs: number = 5000
+): Promise<TestConnectionResult> {
+  const startTime = Date.now();
+  
+  // 将 ws:// 转换为 http://，wss:// 转换为 https://
+  const httpUrl = gatewayUrl
+    .replace(/^ws:\/\//, 'http://')
+    .replace(/^wss:\/\//, 'https://')
+    .replace(/\/ws\/gateway\/?$/, '/api/ping');
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    const response = await fetch(httpUrl, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `HTTP ${response.status}: ${response.statusText}`,
+        latencyMs: Date.now() - startTime,
+      };
+    }
+
+    const data = await response.json() as { status: string; service: string; timestamp: number };
+    
+    return {
+      success: data.status === 'ok',
+      service: data.service,
+      timestamp: data.timestamp,
+      latencyMs: Date.now() - startTime,
+    };
+  } catch (err) {
+    const error = err as Error;
+    return {
+      success: false,
+      error: error.name === 'AbortError' ? '连接超时' : error.message,
+      latencyMs: Date.now() - startTime,
+    };
+  }
+}
+
 export class ShareCrmClient {
   private ws: WebSocket | null = null;
   private options: ShareCrmClientOptions;
