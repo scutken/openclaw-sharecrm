@@ -153,7 +153,7 @@ const shareCrmChannel = {
         logger: logger,
 
         onMessage: (event) => {
-          handleInboundMessage(event, account, cfg);
+          handleInboundMessage(event, account, cfg, channelRt);
         },
 
         onConnected: (info) => {
@@ -203,7 +203,8 @@ const shareCrmChannel = {
 async function handleInboundMessage(
   event: MessageEvent,
   account: ResolvedShareCrmAccount,
-  cfg: Record<string, unknown>
+  cfg: Record<string, unknown>,
+  channelRuntime?: ChannelRuntime
 ): Promise<void> {
   const runtime = getShareCrmRuntime();
   const logger = runtime?.logger ?? console;
@@ -238,9 +239,6 @@ async function handleInboundMessage(
   };
 
   logger.info(`[ShareCRM] 收到消息: from=${event.from.name}, text=${event.text.substring(0, 50)}`);
-  
-  // 获取 channelRuntime
-  const channelRuntime = getChannelRuntime();
   
   // 调试：打印 runtime 可用的 API
   logger.info(`[ShareCRM] runtime keys: ${Object.keys(runtime || {}).join(", ")}`);
