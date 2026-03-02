@@ -52,8 +52,7 @@
         },
         "description": "多账号配置"
       }
-    },
-    "required": ["gatewayUrl"]
+    }
   },
   "uiHints": {
     "gatewayUrl": {
