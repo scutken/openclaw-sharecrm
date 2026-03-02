@@ -35,12 +35,16 @@ export interface PluginRuntime {
 }
 
 let currentRuntime: PluginRuntime | null = null;
+let currentChannelRuntime: ChannelRuntime | null = null;
 
 /**
  * 设置运行时
  */
-export function setShareCrmRuntime(runtime: PluginRuntime): void {
+export function setShareCrmRuntime(runtime: PluginRuntime, channelRuntime?: ChannelRuntime): void {
   currentRuntime = runtime;
+  if (channelRuntime) {
+    currentChannelRuntime = channelRuntime;
+  }
 }
 
 /**
@@ -51,8 +55,16 @@ export function getShareCrmRuntime(): PluginRuntime | null {
 }
 
 /**
+ * 获取 ChannelRuntime
+ */
+export function getChannelRuntime(): ChannelRuntime | null {
+  return currentChannelRuntime;
+}
+
+/**
  * 重置运行时
  */
 export function resetShareCrmRuntime(): void {
   currentRuntime = null;
+  currentChannelRuntime = null;
 }

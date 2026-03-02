@@ -5,7 +5,7 @@
 
 import { ShareCrmClient, type MessageEvent, type SendResult } from "./api.js";
 import { ShareCrmConfigSchema, type ResolvedShareCrmAccount } from "./config-schema.js";
-import { getShareCrmRuntime, setShareCrmRuntime, type PluginRuntime } from "./runtime.js";
+import { getShareCrmRuntime, getChannelRuntime, setShareCrmRuntime, type PluginRuntime, type ChannelRuntime } from "./runtime.js";
 
 // ============ 全局状态 ============
 
@@ -128,8 +128,10 @@ const shareCrmChannel = {
         client = null;
       }
       
-      // 直接保存 runtime（不要修改它）
-      setShareCrmRuntime(runtime);
+      // 直接保存 runtime 和 channelRuntime
+      const channelRt = runtimeAny?.channelRuntime as ChannelRuntime | undefined;
+      setShareCrmRuntime(runtime, channelRt);
+      logger.info(`[ShareCRM] channelRuntime 已保存: ${channelRt ? "是" : "否"}`);
 
       const account = shareCrmChannel.config.resolveAccount(cfg, accountId);
       currentAccount = account;
@@ -237,12 +239,12 @@ async function handleInboundMessage(
 
   logger.info(`[ShareCRM] 收到消息: from=${event.from.name}, text=${event.text.substring(0, 50)}`);
   
-  // 获取 channelRuntime（通过类型断言）
-  const runtimeAny = runtime as unknown as Record<string, unknown>;
-  const channelRuntime = runtimeAny?.channelRuntime as PluginRuntime["channelRuntime"];
+  // 获取 channelRuntime
+  const channelRuntime = getChannelRuntime();
   
   // 调试：打印 runtime 可用的 API
   logger.info(`[ShareCRM] runtime keys: ${Object.keys(runtime || {}).join(", ")}`);
+  logger.info(`[ShareCRM] channelRuntime 可用: ${channelRuntime ? "是" : "否"}`);
   if (channelRuntime) {
     logger.info(`[ShareCRM] channelRuntime keys: ${Object.keys(channelRuntime).join(", ")}`);
   }
