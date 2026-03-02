@@ -175,16 +175,15 @@ const shareCrmChannel = {
       // 建立连接
       client.connect();
 
-      // 等待中止信号（保持 channel 活跃）
-      await new Promise<void>((resolve) => {
-        abortSignal.addEventListener("abort", () => {
-          logger.info(`[ShareCRM] 收到中止信号，断开连接`);
-          client?.disconnect();
-          client = null;
-          currentAccount = null;
-          resolve();
-        });
+      // 监听中止信号（不阻塞初始化）
+      abortSignal.addEventListener("abort", () => {
+        logger.info(`[ShareCRM] 收到中止信号，断开连接`);
+        client?.disconnect();
+        client = null;
+        currentAccount = null;
       });
+      
+      // 立即返回，不阻塞 Gateway 初始化
     },
 
     stopAccount: (accountId?: string): void => {
