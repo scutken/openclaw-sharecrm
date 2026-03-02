@@ -290,11 +290,23 @@ function checkPermission(account: ResolvedShareCrmAccount, event: MessageEvent):
 interface PluginApi {
   logger: Console;
   registerChannel: (opts: { plugin: typeof shareCrmChannel }) => void;
+  [key: string]: unknown;
+}
+
+let pluginApi: PluginApi | null = null;
+
+export function getPluginApi(): PluginApi | null {
+  return pluginApi;
 }
 
 export default function register(api: PluginApi): void {
+  pluginApi = api;
   const logger = api?.logger ?? console;
   logger.info("[ShareCRM] 插件加载中...");
+  
+  // 调试：打印 api 对象的所有 keys
+  logger.info(`[ShareCRM] api keys: ${Object.keys(api).join(", ")}`);
+  
   api.registerChannel({ plugin: shareCrmChannel });
   logger.info("[ShareCRM] Channel 已注册");
 }
