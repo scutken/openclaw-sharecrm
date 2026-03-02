@@ -6,7 +6,7 @@
 
 ```bash
 # 1. 克隆插件到 OpenClaw extensions 目录
-git clone https://github.com/scutken/openclaw-sharecrm ~/.openclaw/extensions/sharecrm
+git clone git@github.com:scutken/openclaw-sharecrm.git ~/.openclaw/extensions/sharecrm
 
 # 2. 安装依赖并编译
 cd ~/.openclaw/extensions/sharecrm
@@ -21,7 +21,7 @@ openclaw gateway restart
 
 ```bash
 # 1. 克隆到任意目录
-git clone https://github.com/scutken/openclaw-sharecrm ~/plugins/sharecrm
+git clone git@github.com:scutken/openclaw-sharecrm.git ~/plugins/sharecrm
 
 # 2. 安装依赖并编译
 cd ~/plugins/sharecrm

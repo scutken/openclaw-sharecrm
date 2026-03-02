@@ -34,7 +34,7 @@
     },
     "install": {
       "npmSpec": "openclaw-sharecrm",
-      "gitUrl": "https://github.com/scutken/openclaw-sharecrm",
+      "gitUrl": "git@github.com:scutken/openclaw-sharecrm.git",
       "defaultChoice": "git"
     }
   },
