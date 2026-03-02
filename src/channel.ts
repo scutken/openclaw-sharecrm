@@ -101,10 +101,24 @@ const shareCrmChannel = {
         runtime: PluginRuntime;
         abortSignal: AbortSignal;
         accountId?: string;
+        channelRuntime?: {
+          dispatchReplyFromConfig: (opts: {
+            cfg: Record<string, unknown>;
+            ctx: Record<string, unknown>;
+            deliver: (payload: { text?: string }) => Promise<void>;
+          }) => Promise<void>;
+        };
+        [key: string]: unknown;
       }
     ): Promise<void> => {
-      const { cfg, runtime, abortSignal, accountId } = params;
+      const { cfg, runtime, abortSignal, accountId, channelRuntime } = params;
       const logger = runtime?.logger ?? console;
+      
+      // 调试：打印 params 所有 keys
+      logger.info(`[ShareCRM] startAccount params keys: ${Object.keys(params).join(", ")}`);
+      if (channelRuntime) {
+        logger.info(`[ShareCRM] channelRuntime keys: ${Object.keys(channelRuntime).join(", ")}`);
+      }
       
       // 先断开现有连接（防止 auto-restart 导致重复连接）
       if (client) {
@@ -113,7 +127,8 @@ const shareCrmChannel = {
         client = null;
       }
       
-      setShareCrmRuntime(runtime);
+      // 保存 channelRuntime 供消息处理使用
+      setShareCrmRuntime({ ...runtime, channelRuntime } as PluginRuntime);
 
       const account = shareCrmChannel.config.resolveAccount(cfg, accountId);
       currentAccount = account;
@@ -223,32 +238,43 @@ async function handleInboundMessage(
   
   // 调试：打印 runtime 可用的 API
   logger.info(`[ShareCRM] runtime keys: ${Object.keys(runtime || {}).join(", ")}`);
-  if (runtime?.channel) {
-    logger.info(`[ShareCRM] runtime.channel keys: ${Object.keys(runtime.channel).join(", ")}`);
-  }
-  const runtimeAny = runtime as unknown as Record<string, unknown>;
-  if (runtimeAny?.inbound) {
-    logger.info(`[ShareCRM] runtime.inbound keys: ${Object.keys(runtimeAny.inbound as object).join(", ")}`);
+  if (runtime?.channelRuntime) {
+    logger.info(`[ShareCRM] channelRuntime keys: ${Object.keys(runtime.channelRuntime).join(", ")}`);
   }
 
-  // 路由到 OpenClaw 处理
-  if (runtime?.channel?.reply?.dispatchReplyWithBufferedBlockDispatcher) {
+  // 定义 deliver 函数
+  const deliver = async (payload: { text?: string }) => {
+    const replyText = payload.text || "";
+    if (!replyText.trim()) return;
+
+    const targetChatId = account.chatId || event.chat_id;
+    const result = await client?.sendMessage(targetChatId, replyText);
+
+    if (!result?.ok) {
+      logger.error(`[ShareCRM] 回复失败: ${result?.error}`);
+    }
+  };
+
+  // 优先使用 channelRuntime.dispatchReplyFromConfig
+  if (runtime?.channelRuntime?.dispatchReplyFromConfig) {
+    try {
+      logger.info(`[ShareCRM] 使用 channelRuntime.dispatchReplyFromConfig 分发消息`);
+      await runtime.channelRuntime.dispatchReplyFromConfig({
+        cfg,
+        ctx: msgContext,
+        deliver,
+      });
+    } catch (err) {
+      logger.error(`[ShareCRM] dispatchReplyFromConfig 异常: ${err}`);
+    }
+  } else if (runtime?.channel?.reply?.dispatchReplyWithBufferedBlockDispatcher) {
+    // 回退到旧 API
     try {
       await runtime.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
         ctx: msgContext,
         cfg,
         dispatcherOptions: {
-          deliver: async (payload: { text?: string }) => {
-            const replyText = payload.text || "";
-            if (!replyText.trim()) return;
-
-            const targetChatId = account.chatId || event.chat_id;
-            const result = await client?.sendMessage(targetChatId, replyText);
-
-            if (!result?.ok) {
-              logger.error(`[ShareCRM] 回复失败: ${result?.error}`);
-            }
-          },
+          deliver,
           onError: (err: unknown, info: { kind: string }) => {
             logger.error(`[ShareCRM] 处理错误 (${info.kind}): ${err}`);
           },

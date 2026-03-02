@@ -3,10 +3,23 @@
  */
 
 /**
+ * Channel Runtime 接口（用于消息分发）
+ */
+export interface ChannelRuntime {
+  dispatchReplyFromConfig?: (opts: {
+    cfg: Record<string, unknown>;
+    ctx: Record<string, unknown>;
+    deliver: (payload: { text?: string }) => Promise<void>;
+  }) => Promise<void>;
+  [key: string]: unknown;
+}
+
+/**
  * 插件运行时接口
  */
 export interface PluginRuntime {
   logger: Console;
+  channelRuntime?: ChannelRuntime;
   channel?: {
     reply?: {
       dispatchReplyWithBufferedBlockDispatcher?: (params: {
