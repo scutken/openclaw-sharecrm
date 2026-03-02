@@ -210,6 +210,16 @@ async function handleInboundMessage(
   };
 
   logger.info(`[ShareCRM] 收到消息: from=${event.from.name}, text=${event.text.substring(0, 50)}`);
+  
+  // 调试：打印 runtime 可用的 API
+  logger.info(`[ShareCRM] runtime keys: ${Object.keys(runtime || {}).join(", ")}`);
+  if (runtime?.channel) {
+    logger.info(`[ShareCRM] runtime.channel keys: ${Object.keys(runtime.channel).join(", ")}`);
+  }
+  const runtimeAny = runtime as unknown as Record<string, unknown>;
+  if (runtimeAny?.inbound) {
+    logger.info(`[ShareCRM] runtime.inbound keys: ${Object.keys(runtimeAny.inbound as object).join(", ")}`);
+  }
 
   // 路由到 OpenClaw 处理
   if (runtime?.channel?.reply?.dispatchReplyWithBufferedBlockDispatcher) {

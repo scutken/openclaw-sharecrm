@@ -92,6 +92,7 @@ export class ShareCrmClient {
     this.ws.on("close", (code, reason) => {
       const reasonStr = reason?.toString() || `code: ${code}`;
       this.logger.info(`[ShareCRM] 连接关闭: ${reasonStr}`);
+      this.ws = null; // 清理 ws 对象，允许重连
       this.clearPendingRequests("连接已断开");
       this.options.onDisconnected(reasonStr);
     });
