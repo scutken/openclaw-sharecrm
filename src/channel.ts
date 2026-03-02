@@ -111,13 +111,14 @@ const shareCrmChannel = {
         [key: string]: unknown;
       }
     ): Promise<void> => {
-      const { cfg, runtime, abortSignal, accountId, channelRuntime } = params;
+      const { cfg, runtime, abortSignal, accountId } = params;
       const logger = runtime?.logger ?? console;
       
       // 调试：打印 params 所有 keys
       logger.info(`[ShareCRM] startAccount params keys: ${Object.keys(params).join(", ")}`);
-      if (channelRuntime) {
-        logger.info(`[ShareCRM] channelRuntime keys: ${Object.keys(channelRuntime).join(", ")}`);
+      const runtimeAny = runtime as unknown as Record<string, unknown>;
+      if (runtimeAny?.channelRuntime) {
+        logger.info(`[ShareCRM] runtime.channelRuntime keys: ${Object.keys(runtimeAny.channelRuntime as object).join(", ")}`);
       }
       
       // 先断开现有连接（防止 auto-restart 导致重复连接）
@@ -127,8 +128,8 @@ const shareCrmChannel = {
         client = null;
       }
       
-      // 保存 channelRuntime 供消息处理使用
-      setShareCrmRuntime({ ...runtime, channelRuntime } as PluginRuntime);
+      // 直接保存 runtime（不要修改它）
+      setShareCrmRuntime(runtime);
 
       const account = shareCrmChannel.config.resolveAccount(cfg, accountId);
       currentAccount = account;
@@ -236,10 +237,14 @@ async function handleInboundMessage(
 
   logger.info(`[ShareCRM] 收到消息: from=${event.from.name}, text=${event.text.substring(0, 50)}`);
   
+  // 获取 channelRuntime（通过类型断言）
+  const runtimeAny = runtime as unknown as Record<string, unknown>;
+  const channelRuntime = runtimeAny?.channelRuntime as PluginRuntime["channelRuntime"];
+  
   // 调试：打印 runtime 可用的 API
   logger.info(`[ShareCRM] runtime keys: ${Object.keys(runtime || {}).join(", ")}`);
-  if (runtime?.channelRuntime) {
-    logger.info(`[ShareCRM] channelRuntime keys: ${Object.keys(runtime.channelRuntime).join(", ")}`);
+  if (channelRuntime) {
+    logger.info(`[ShareCRM] channelRuntime keys: ${Object.keys(channelRuntime).join(", ")}`);
   }
 
   // 定义 deliver 函数
@@ -256,10 +261,10 @@ async function handleInboundMessage(
   };
 
   // 优先使用 channelRuntime.dispatchReplyFromConfig
-  if (runtime?.channelRuntime?.dispatchReplyFromConfig) {
+  if (channelRuntime?.dispatchReplyFromConfig) {
     try {
       logger.info(`[ShareCRM] 使用 channelRuntime.dispatchReplyFromConfig 分发消息`);
-      await runtime.channelRuntime.dispatchReplyFromConfig({
+      await channelRuntime.dispatchReplyFromConfig({
         cfg,
         ctx: msgContext,
         deliver,
