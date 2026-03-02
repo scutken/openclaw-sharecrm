@@ -2,14 +2,23 @@
  * OpenClaw ShareCRM Plugin - Runtime 单例
  */
 
-import type { ShareCrmMessageContext } from './types.js';
-
 /**
  * 插件运行时接口
  */
 export interface PluginRuntime {
   logger: Console;
-  routeMessage?: (context: ShareCrmMessageContext) => Promise<void>;
+  channel?: {
+    reply?: {
+      dispatchReplyWithBufferedBlockDispatcher?: (params: {
+        ctx: Record<string, unknown>;
+        cfg: Record<string, unknown>;
+        dispatcherOptions: {
+          deliver: (payload: { text?: string }) => Promise<void>;
+          onError: (err: unknown, info: { kind: string }) => void;
+        };
+      }) => Promise<{ queuedFinal?: boolean }>;
+    };
+  };
 }
 
 let currentRuntime: PluginRuntime | null = null;

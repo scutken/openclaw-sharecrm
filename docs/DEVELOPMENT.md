@@ -73,17 +73,38 @@ openclaw gateway restart
 {
   "channels": {
     "sharecrm": {
-      "gatewayUrl": "ws://localhost:8099/ws/gateway",
-      "appId": "your-app-id",
-      "appSecret": "your-app-secret",
-      "dmPolicy": "pairing",
-      "allowFrom": [],
-      "groupPolicy": "allowlist",
-      "groupAllowFrom": []
+      "enabled": true,
+      "gatewayUrl": "ws://localhost:18789",
+      "botToken": "Base64编码的appId:appSecret",
+      "chatId": "default-chat-id",
+      "dmPolicy": "open",
+      "allowFrom": []
     }
   }
 }
 ```
+
+### Token 生成
+
+```bash
+# Linux/macOS
+echo -n "appId:appSecret" | base64
+
+# 示例：appId=bot001, appSecret=secret123
+echo -n "bot001:secret123" | base64
+# 输出：Ym90MDAxOnNlY3JldDEyMw==
+```
+
+### 配置项说明
+
+| 配置项 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| `enabled` | boolean | 否 | 是否启用，默认 true |
+| `gatewayUrl` | string | 是 | Gateway WebSocket 地址 |
+| `botToken` | string | 是 | Base64(appId:appSecret) |
+| `chatId` | string | 否 | 默认发送目标 |
+| `dmPolicy` | string | 否 | DM 策略：open/pairing/allowlist/disabled |
+| `allowFrom` | string[] | 否 | 允许的用户 ID 列表 |
 
 ---
 
@@ -104,25 +125,11 @@ openclaw plugins doctor
 
 ## 测试连接
 
-### 编程方式
-
-```typescript
-import { testConnection } from 'openclaw-sharecrm';
-
-const result = await testConnection('ws://localhost:8099/ws/gateway');
-
-if (result.success) {
-  console.log(`连接成功，延迟: ${result.latencyMs}ms`);
-} else {
-  console.error(`连接失败: ${result.error}`);
-}
-```
-
 ### 命令行测试
 
 ```bash
 # 测试 Gateway 健康检查
-curl http://localhost:8099/api/ping
+curl http://localhost:18789/api/ping
 
 # 预期响应
 # {"status":"ok","service":"sharecrm-im-gateway","timestamp":1709345678000}
@@ -136,125 +143,137 @@ curl http://localhost:8099/api/ping
 
 ```typescript
 import { 
-  shareCrmPlugin,
-  sendText,
-  replyMessage,
-  getAccountState,
+  shareCrmChannel,
+  ShareCrmClient,
+  ShareCrmConfigSchema,
 } from 'openclaw-sharecrm';
 ```
 
-### 发送消息
+### 使用客户端
 
 ```typescript
-import { sendText, replyMessage } from 'openclaw-sharecrm';
+import { ShareCrmClient } from 'openclaw-sharecrm';
 
-// 发送文本
-await sendText('channel-id', 'Hello!');
+const client = new ShareCrmClient({
+  gatewayUrl: "ws://localhost:18789",
+  botToken: "Ym90MDAxOnNlY3JldDEyMw==",
+  onMessage: (event) => {
+    console.log(`收到消息: ${event.text}`);
+  },
+  onConnected: (info) => {
+    console.log(`已连接: ${info.result?.bot_name}`);
+  },
+  onDisconnected: (reason) => {
+    console.log(`断开连接: ${reason}`);
+  },
+});
 
-// 回复消息
-await replyMessage('channel-id', '回复内容', 'original-msg-id');
-```
+// 连接
+client.connect();
 
-### 监控状态
+// 发送消息
+const result = await client.sendMessage("user-1001", "Hello!");
+if (result.ok) {
+  console.log(`发送成功: ${result.result?.message_id}`);
+}
 
-```typescript
-import { getAccountState, getAllAccountStates } from 'openclaw-sharecrm';
-
-const state = getAccountState('default');
-console.log(state?.connected);
-console.log(state?.lastError);
-```
-
-### 手动控制连接
-
-```typescript
-import { startAccountMonitor, stopAccountMonitor } from 'openclaw-sharecrm';
-
-const controller = new AbortController();
-await startAccountMonitor(account, controller.signal);
-
-// 停止
-stopAccountMonitor('default');
+// 断开
+client.disconnect();
 ```
 
 ---
 
 ## 协议说明
 
-### 消息信封
+### WebSocket 连接
+
+```
+ws://{gatewayUrl}/bot{token}
+```
+
+Token 内置于 URL，连接成功即完成鉴权。
+
+### 消息格式
+
+#### 1. 连接成功（Gateway → Plugin）
 
 ```json
 {
-  "type": "message.new",
-  "seq": 1,
-  "ts": 1709345678000,
-  "payload": { ... }
+  "type": "connected",
+  "data": {
+    "bot_id": "bot001",
+    "bot_name": "ShareCRM Bot"
+  }
 }
 ```
 
-### 消息类型
+#### 2. 收到新消息（Gateway → Plugin）
+
+```json
+{
+  "type": "message",
+  "data": {
+    "message_id": "msg-789",
+    "chat_id": "user-1001",
+    "chat_type": "direct",
+    "from": {
+      "id": "user-1001",
+      "name": "张三"
+    },
+    "text": "你好",
+    "date": 1709366400
+  }
+}
+```
+
+#### 3. 发送消息（Plugin → Gateway）
+
+```json
+{
+  "type": "send",
+  "id": "req-001",
+  "data": {
+    "chat_id": "user-1001",
+    "text": "你好！"
+  }
+}
+```
+
+#### 4. 发送响应（Gateway → Plugin）
+
+```json
+{
+  "type": "send_result",
+  "id": "req-001",
+  "ok": true,
+  "data": {
+    "message_id": "msg-456"
+  }
+}
+```
+
+#### 5. 错误响应
+
+```json
+{
+  "type": "error",
+  "id": "req-001",
+  "error": {
+    "code": "INVALID_CHAT_ID",
+    "message": "无效的 chat_id"
+  }
+}
+```
+
+### 消息类型汇总
 
 | 类型 | 方向 | 说明 |
 |------|------|------|
-| `auth` | → Server | 鉴权请求 |
-| `auth.ok` | ← Server | 鉴权成功 |
-| `auth.error` | ← Server | 鉴权失败 |
-| `system.ping` | ← Server | 心跳检测 |
-| `system.pong` | → Server | 心跳响应 |
-| `message.new` | ← Server | 新消息 |
-| `command.sendMessage` | → Server | 发送消息 |
-| `command.ack` | ← Server | 命令确认 |
-
-### 新消息载荷
-
-```json
-{
-  "chatType": "direct",
-  "channelId": "user123",
-  "messageId": "msg001",
-  "from": { "userId": "user123", "name": "张三" },
-  "text": "你好",
-  "mentions": []
-}
-```
-
----
-
-## 消息上下文
-
-```typescript
-interface ShareCrmMessageContext {
-  accountId: string;
-  chatType: 'direct' | 'group';
-  channelId: string;
-  messageId: string;
-  from: { userId: string; name: string };
-  text: string;
-  mentions: string[];
-  sessionKey: string;
-}
-```
-
----
-
-## 连接管理
-
-### 自动重连
-- 最大重试：10 次
-- 重试间隔：1s → 2s → 5s → 10s
-
-### 高级配置
-
-```typescript
-import { ConnectionConfig } from 'openclaw-sharecrm';
-
-const config: Partial<ConnectionConfig> = {
-  authTimeoutMs: 10000,
-  heartbeatIntervalMs: 30000,
-  reconnectDelays: [1000, 2000, 5000, 10000],
-  maxReconnectAttempts: 10,
-};
-```
+| `connected` | ← Server | 连接成功，返回 Bot 信息 |
+| `message` | ← Server | 收到新消息 |
+| `send` | → Server | 发送消息请求 |
+| `send_result` | ← Server | 发送成功响应 |
+| `error` | ← Server | 错误响应 |
 
 ---
 
@@ -263,18 +282,30 @@ const config: Partial<ConnectionConfig> = {
 ```
 OpenClaw
 └── openclaw-sharecrm
-    ├── channel.ts    (入口)
-    ├── monitor.ts    (连接管理)
-    ├── client.ts     (WebSocket)
-    ├── bot.ts        (入站)
-    ├── outbound.ts   (出站)
-    └── accounts.ts   (账号)
+    ├── api.ts           (WebSocket 客户端)
+    ├── channel.ts       (Channel 插件入口)
+    ├── config-schema.ts (Zod 配置验证)
+    └── runtime.ts       (运行时单例)
             │
-            │ WebSocket
+            │ WebSocket (双向通信)
             ▼
     ShareCRM-IM-Gateway
-    ws://host:8099/ws/gateway
+    ws://host:18789/bot{token}
 ```
+
+---
+
+## 连接管理
+
+### 自动重连
+
+- 断开后 3 秒自动重连
+- 使用 WebSocket 原生 ping/pong 心跳
+
+### 发送超时
+
+- 默认 10 秒超时
+- 超时后返回 `{ ok: false, error: "发送超时" }`
 
 ---
 
@@ -282,7 +313,19 @@ OpenClaw
 
 | 错误 | 原因 | 解决 |
 |------|------|------|
-| 鉴权超时 | Gateway 无响应 | 检查地址和网络 |
-| 鉴权失败 | 凭证错误 | 核实 appId/appSecret |
-| 未连接 | 连接断开 | 等待重连或检查 Gateway |
-| 重连失败 | 超过重试上限 | 检查 Gateway 状态 |
+| 连接失败 | Token 无效 | 检查 botToken 格式（Base64 编码） |
+| 未连接 | 连接断开 | 等待自动重连或检查 Gateway |
+| 发送超时 | Gateway 无响应 | 检查 Gateway 状态和网络 |
+| 配置不完整 | 缺少必填项 | 检查 gatewayUrl 和 botToken |
+
+---
+
+## 与旧版本对比
+
+| 对比项 | 旧版本 | 新版本 |
+|--------|--------|--------|
+| 鉴权方式 | 连接后发 AUTH 消息 | Token 内置 URL |
+| 消息类型 | 8 种 | 5 种 |
+| 心跳 | 自定义 ping/pong | WebSocket 原生 |
+| 文件数 | 8 个 | 4 个 |
+| 配置项 | appId + appSecret | botToken |
