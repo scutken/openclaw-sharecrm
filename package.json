@@ -1,0 +1,32 @@
+{
+  "name": "openclaw-sharecrm",
+  "version": "1.0.0",
+  "description": "OpenClaw ShareCRM Channel Plugin - 通过 ShareCRM-IM-Gateway 接入内部 IM",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rimraf dist",
+    "test": "echo \"No tests yet\""
+  },
+  "keywords": [
+    "openclaw",
+    "sharecrm",
+    "channel",
+    "plugin",
+    "im",
+    "gateway"
+  ],
+  "author": "fxiaoke",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/ws": "^8.5.10",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.3.3"
+  }
+}
