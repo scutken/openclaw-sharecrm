@@ -52,6 +52,14 @@ const shareCrmChannel = {
       const gatewayUrl = (accountCfg?.gatewayUrl ?? channelCfg?.gatewayUrl) as string | undefined;
       const botToken = accountCfg?.botToken as string | undefined;
 
+      const dmPolicy = (accountCfg?.dmPolicy as ResolvedShareCrmAccount["dmPolicy"]) ?? "open";
+      let allowFrom = (accountCfg?.allowFrom as string[]) ?? [];
+      
+      // dmPolicy: "open" 时自动添加通配符
+      if (dmPolicy === "open" && !allowFrom.includes("*")) {
+        allowFrom = ["*", ...allowFrom];
+      }
+
       return {
         accountId: id,
         enabled: (accountCfg?.enabled as boolean) ?? true,
@@ -59,8 +67,8 @@ const shareCrmChannel = {
         gatewayUrl: gatewayUrl ?? "",
         botToken: botToken ?? "",
         chatId: accountCfg?.chatId as string | undefined,
-        dmPolicy: (accountCfg?.dmPolicy as ResolvedShareCrmAccount["dmPolicy"]) ?? "open",
-        allowFrom: (accountCfg?.allowFrom as string[]) ?? [],
+        dmPolicy,
+        allowFrom,
       };
     },
   },
@@ -79,7 +87,7 @@ const shareCrmChannel = {
       }
 
       const runtime = getShareCrmRuntime();
-      runtime?.logger.info(`[ShareCRM] 发送消息: channelId=${ctx.channelId}`);
+      runtime?.logger?.info(`[ShareCRM] 发送消息: channelId=${ctx.channelId}`);
 
       const result = await client.sendMessage(ctx.channelId, ctx.text);
       return { ok: result.ok, error: result.error };
