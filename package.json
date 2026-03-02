@@ -22,7 +22,22 @@
   "author": "fxiaoke",
   "license": "MIT",
   "openclaw": {
-    "extensions": ["./index.ts"]
+    "extensions": ["./index.ts"],
+    "channel": {
+      "id": "sharecrm",
+      "label": "ShareCRM",
+      "selectionLabel": "ShareCRM (内部 IM)",
+      "docsPath": "/channels/sharecrm",
+      "docsLabel": "sharecrm",
+      "blurb": "ShareCRM 内部 IM 渠道，通过 WebSocket 双向通信。",
+      "order": 100,
+      "aliases": ["scrm"]
+    },
+    "install": {
+      "npmSpec": "openclaw-sharecrm",
+      "localPath": "extensions/openclaw-sharecrm",
+      "defaultChoice": "npm"
+    }
   },
   "dependencies": {
     "ws": "^8.16.0",
