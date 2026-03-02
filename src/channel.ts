@@ -1,95 +1,98 @@
 /**
- * OpenClaw ShareCRM Plugin - 插件定义
+ * OpenClaw ShareCRM Plugin - Channel 插件入口
  */
 
-import type { ResolvedShareCrmAccount } from './types.js';
-import {
-  resolveShareCrmAccount,
-  listShareCrmAccountIds,
-  resolveDefaultShareCrmAccountId,
-  isConfigured,
-  describeAccount,
-} from './accounts.js';
-import { startAccountMonitor, stopAccountMonitor, getAccountState } from './monitor.js';
-import { sendMessage, sendText, replyMessage } from './outbound.js';
-import { setShareCrmRuntime, resetShareCrmRuntime, type PluginRuntime } from './runtime.js';
+import type { ResolvedShareCrmAccount, ShareCrmConfig } from './types.js';
+import { startAccountMonitor, stopAccountMonitor } from './monitor.js';
+import { setShareCrmRuntime, type PluginRuntime } from './runtime.js';
 
 /**
- * ShareCRM 插件元数据
+ * ShareCRM Channel 定义
  */
-export const shareCrmMeta = {
+const shareCrmChannel = {
   id: 'sharecrm',
-  label: 'ShareCRM',
-  selectionLabel: 'ShareCRM (内部 IM)',
-  docsPath: '/channels/sharecrm',
-  docsLabel: 'ShareCRM',
-  blurb: '内部 ShareCRM 渠道，通过 ShareCRM-IM-Gateway 接入。',
-  order: 80,
-};
 
-/**
- * ShareCRM 插件能力
- */
-export const shareCrmCapabilities = {
-  chatTypes: ['direct', 'group'] as const,
-  threads: false,
-  reactions: false,
-  media: false,
-  edit: false,
-  reply: true,
-};
-
-/**
- * ShareCRM 插件定义
- */
-export const shareCrmPlugin = {
-  meta: shareCrmMeta,
-  capabilities: shareCrmCapabilities,
-
-  // 配置相关
-  config: {
-    listAccountIds: listShareCrmAccountIds,
-    resolveAccount: resolveShareCrmAccount,
-    defaultAccountId: resolveDefaultShareCrmAccountId,
-    isConfigured,
-    describeAccount,
+  meta: {
+    id: 'sharecrm',
+    label: 'ShareCRM',
+    selectionLabel: 'ShareCRM (内部 IM)',
+    docsPath: '/channels/sharecrm',
+    docsLabel: 'sharecrm',
+    blurb: '内部 ShareCRM 渠道，通过 ShareCRM-IM-Gateway 接入。',
+    aliases: ['scrm'],
   },
 
-  // 安全策略
-  security: {
-    collectWarnings: (account: ResolvedShareCrmAccount) => {
-      const warnings: string[] = [];
-      if (account.groupPolicy === 'open' && account.groupAllowFrom.length === 0) {
-        warnings.push(
-          '群组策略为 "open" 但未设置 groupAllowFrom，机器人可能在所有群中触发'
-        );
-      }
-      return warnings;
+  capabilities: {
+    chatTypes: ['direct', 'group'] as const,
+    threads: false,
+    reactions: false,
+    media: false,
+    edit: false,
+    reply: true,
+  },
+
+  config: {
+    listAccountIds: (cfg: any): string[] => {
+      return Object.keys(cfg.channels?.sharecrm?.accounts ?? { default: {} });
+    },
+
+    resolveAccount: (cfg: any, accountId?: string): ResolvedShareCrmAccount => {
+      const id = accountId ?? 'default';
+      const channelCfg = cfg.channels?.sharecrm ?? {};
+      const accountCfg = channelCfg.accounts?.[id] ?? channelCfg;
+
+      return {
+        accountId: id,
+        enabled: accountCfg.enabled ?? true,
+        configured: !!(accountCfg.gatewayUrl && accountCfg.appId && accountCfg.appSecret),
+        gatewayUrl: accountCfg.gatewayUrl,
+        appId: accountCfg.appId,
+        appSecret: accountCfg.appSecret,
+        dmPolicy: accountCfg.dmPolicy ?? 'pairing',
+        allowFrom: accountCfg.allowFrom ?? [],
+        groupPolicy: accountCfg.groupPolicy ?? 'allowlist',
+        groupAllowFrom: accountCfg.groupAllowFrom ?? [],
+      };
     },
   },
 
-  // Gateway 启动入口
+  outbound: {
+    deliveryMode: 'direct' as const,
+
+    sendText: async (ctx: {
+      text: string;
+      channelId: string;
+      accountId?: string;
+      replyTo?: string;
+    }): Promise<{ ok: boolean; error?: string }> => {
+      const { sendText } = await import('./outbound.js');
+      try {
+        const result = await sendText(ctx.channelId, ctx.text, ctx.accountId);
+        return { ok: result.success, error: result.errorMessage };
+      } catch (err) {
+        return { ok: false, error: (err as Error).message };
+      }
+    },
+  },
+
   gateway: {
     startAccount: async (
-      config: unknown,
+      cfg: any,
       runtime: PluginRuntime,
       abortSignal: AbortSignal,
       accountId?: string
     ): Promise<void> => {
       setShareCrmRuntime(runtime);
 
-      const account = resolveShareCrmAccount(
-        config as Record<string, unknown>,
-        accountId ?? 'default'
-      );
+      const account = shareCrmChannel.config.resolveAccount(cfg, accountId);
 
       if (!account.enabled) {
         runtime.logger.info(`[ShareCRM] 账号 ${account.accountId} 未启用`);
         return;
       }
 
-      if (!isConfigured(account)) {
-        runtime.logger.warn(`[ShareCRM] 账号 ${account.accountId} 配置不完整`);
+      if (!account.configured) {
+        runtime.logger.warn(`[ShareCRM] 账号 ${account.accountId} 配置不完整，需要 gatewayUrl, appId, appSecret`);
         return;
       }
 
@@ -99,23 +102,25 @@ export const shareCrmPlugin = {
     stopAccount: (accountId?: string): void => {
       stopAccountMonitor(accountId ?? 'default');
     },
-
-    cleanup: (): void => {
-      resetShareCrmRuntime();
-    },
-  },
-
-  // 消息发送
-  messaging: {
-    sendMessage,
-    sendText,
-    replyMessage,
-  },
-
-  // 状态查询
-  status: {
-    getAccountState,
   },
 };
 
-export default shareCrmPlugin;
+/**
+ * OpenClaw Plugin API 类型
+ */
+interface PluginApi {
+  logger: Console;
+  registerChannel: (opts: { plugin: typeof shareCrmChannel }) => void;
+}
+
+/**
+ * 插件注册函数 - OpenClaw 入口点
+ */
+export default function register(api: PluginApi): void {
+  api.logger.info('[ShareCRM] 插件加载中...');
+  api.registerChannel({ plugin: shareCrmChannel });
+  api.logger.info('[ShareCRM] Channel 已注册');
+}
+
+// 导出 channel 定义供测试使用
+export { shareCrmChannel };

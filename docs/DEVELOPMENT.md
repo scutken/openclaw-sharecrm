@@ -69,18 +69,17 @@ openclaw gateway restart
 
 在 `~/.openclaw/openclaw.json` 中添加配置：
 
-```json5
+```json
 {
-  channels: {
-    sharecrm: {
-      enabled: true,
-      gatewayUrl: "ws://localhost:8099/ws/gateway",
-      appId: "your-app-id",
-      appSecret: "your-app-secret",
-      dmPolicy: "pairing",
-      allowFrom: [],
-      groupPolicy: "allowlist",
-      groupAllowFrom: []
+  "channels": {
+    "sharecrm": {
+      "gatewayUrl": "ws://localhost:8099/ws/gateway",
+      "appId": "your-app-id",
+      "appSecret": "your-app-secret",
+      "dmPolicy": "pairing",
+      "allowFrom": [],
+      "groupPolicy": "allowlist",
+      "groupAllowFrom": []
     }
   }
 }

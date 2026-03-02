@@ -2,9 +2,11 @@
  * OpenClaw ShareCRM Plugin - 包入口
  */
 
-// 主插件导出
-export { shareCrmPlugin, shareCrmMeta, shareCrmCapabilities } from './channel.js';
+// 默认导出 register 函数（OpenClaw 入口点）
 export { default } from './channel.js';
+
+// 导出 channel 定义
+export { shareCrmChannel } from './channel.js';
 
 // 类型导出
 export type {
