@@ -268,9 +268,10 @@ interface PluginApi {
 }
 
 export default function register(api: PluginApi): void {
-  api.logger.info("[ShareCRM] 插件加载中...");
+  const logger = api?.logger ?? console;
+  logger.info("[ShareCRM] 插件加载中...");
   api.registerChannel({ plugin: shareCrmChannel });
-  api.logger.info("[ShareCRM] Channel 已注册");
+  logger.info("[ShareCRM] Channel 已注册");
 }
 
 export { shareCrmChannel };
