@@ -1,0 +1,36 @@
+server:
+  port: 8099
+
+spring:
+  application:
+    name: sharecrm-im-gateway
+  r2dbc:
+    # H2 文件模式 + PostgreSQL 兼容
+    url: r2dbc:h2:file:///./data/gatewaydb;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password:
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+  thymeleaf:
+    cache: false  # 开发环境禁用缓存，支持热加载
+  devtools:
+    restart:
+      enabled: true
+    livereload:
+      enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.fxiaoke.sharecrm: DEBUG
+    org.springframework.web.reactive.socket: DEBUG
