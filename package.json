@@ -1,0 +1,28 @@
+{
+  "name": "@openclaw/sharecrm",
+  "version": "1.0.0",
+  "description": "ShareCRM IM Gateway channel plugin for OpenClaw",
+  "type": "module",
+  "dependencies": {
+    "ws": "^8.18.0",
+    "zod": "^4.3.6"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "sharecrm",
+      "label": "ShareCRM",
+      "selectionLabel": "ShareCRM IM Gateway",
+      "docsPath": "/channels/sharecrm",
+      "docsLabel": "sharecrm",
+      "blurb": "Connect ShareCRM IM to OpenClaw via WebSocket gateway.",
+      "order": 95
+    },
+    "install": {
+      "localPath": "extensions/sharecrm",
+      "defaultChoice": "local"
+    }
+  }
+}

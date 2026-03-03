@@ -1,0 +1,9 @@
+{
+  "id": "sharecrm",
+  "channels": ["sharecrm"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
