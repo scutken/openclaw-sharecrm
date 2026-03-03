@@ -1,96 +1,93 @@
-# OpenClaw ShareCRM 插件
+# ShareCRM IM Gateway 渠道插件（OpenClaw）
 
-通过 ShareCRM-IM-Gateway 接入内部 IM 的 OpenClaw 渠道插件。
+通过 ShareCRM IM Gateway 将你的 OpenClaw Agent 接入 ShareCRM 即时通讯。
 
-## 特性
+## 概述
 
-- 纯 WebSocket 双向通信
-- Token 内置 URL，连接即鉴权
-- 简洁的消息协议（5 种消息类型）
-- 自动重连机制
-
-## 安装
-
-```bash
-npm install openclaw-sharecrm
-```
-
-## 配置
-
-```json
-{
-  "channels": {
-    "sharecrm": {
-      "enabled": true,
-      "gatewayUrl": "ws://localhost:18789",
-      "botToken": "Base64编码的appId:appSecret",
-      "chatId": "default-chat-id",
-      "dmPolicy": "open"
-    }
-  }
-}
-```
-
-### 生成 botToken
-
-```bash
-# botToken = Base64(appId:appSecret)
-echo -n "your-app-id:your-app-secret" | base64
-```
-
-### 获取 AppId 和 AppSecret
-
-1. 访问 ShareCRM-IM-Gateway：`http://localhost:18789/accounts`
-2. 创建账号，复制 `appId` 和 `appSecret`
-3. 生成 botToken：`Base64(appId:appSecret)`
-
-### 配置项说明
-
-| 配置项 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `enabled` | boolean | 否 | 是否启用，默认 true |
-| `gatewayUrl` | string | 是 | Gateway WebSocket 地址 |
-| `botToken` | string | 是 | Base64(appId:appSecret) |
-| `chatId` | string | 否 | 默认发送目标 |
-| `dmPolicy` | string | 否 | DM 策略 |
-| `allowFrom` | string[] | 否 | 允许的用户 ID 列表 |
-
-### DM 策略 (dmPolicy)
-
-| 值 | 说明 |
-|------|------|
-| `open` | 接受所有私聊（推荐测试） |
-| `pairing` | 自动配对模式 |
-| `allowlist` | 仅白名单用户 |
-| `disabled` | 禁用私聊 |
-
-## 测试
-
-使用 Gateway 模拟器测试消息：`http://localhost:18789/simulator`
+本插件通过 WebSocket 连接 ShareCRM IM Gateway，支持以下功能：
+- 接收并回复 ShareCRM 用户的私聊消息
+- 参与群组聊天
+- 断线自动重连
+- 支持私聊配对 / 白名单策略
 
 ## 快速开始
 
-```typescript
-import { ShareCrmClient } from 'openclaw-sharecrm';
+### 1. 安装插件
 
-const client = new ShareCrmClient({
-  gatewayUrl: "ws://localhost:18789",
-  botToken: "Ym90MDAxOnNlY3JldDEyMw==",
-  onMessage: (event) => console.log(`收到: ${event.text}`),
-  onConnected: (info) => console.log(`已连接: ${info.result?.bot_name}`),
-  onDisconnected: (reason) => console.log(`断开: ${reason}`),
-});
+在 `openclaw.yaml` 中添加扩展：
 
-client.connect();
-
-// 发送消息
-await client.sendMessage("user-1001", "Hello!");
+```yaml
+extensions:
+  - ./extensions/sharecrm
 ```
 
-## 文档
+### 2. 配置渠道
 
-- [开发文档](./docs/DEVELOPMENT.md) - 安装、配置、协议说明、编程接口
+```yaml
+channels:
+  sharecrm:
+    gatewayUrl: "ws://localhost:8099"          # ShareCRM IM Gateway WebSocket 地址
+    botToken: "Ym90LTAwMTpzZWNyZXQxMjM="      # Base64(appId:appSecret)
+    dmPolicy: "open"                            # open | pairing | allowlist | disabled
+    allowFrom: []                               # 白名单用户 ID（dmPolicy=allowlist 时生效）
+```
 
-## 许可证
+### 3. 生成 Bot Token
 
-MIT License
+`botToken` 是 `appId:appSecret` 的 Base64 编码字符串：
+
+```bash
+echo -n "bot-001:secret123" | base64
+# 输出: Ym90LTAwMTpzZWNyZXQxMjM=
+```
+
+## 配置参考
+
+| 选项 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `gatewayUrl` | string | 必填 | IM Gateway 的 WebSocket 地址 |
+| `botToken` | string | 必填 | Base64 编码的 `appId:appSecret` |
+| `dmPolicy` | string | `"open"` | 私聊策略：`open`（开放）、`pairing`（配对）、`allowlist`（白名单）、`disabled`（禁用） |
+| `allowFrom` | string[] | `[]` | 白名单用户 ID 列表（`dmPolicy=allowlist` 时使用） |
+| `groupPolicy` | string | `"disabled"` | 群聊策略：`open`、`allowlist`、`disabled` |
+| `groupAllowFrom` | string[] | `[]` | 白名单群组 ID 列表 |
+| `chatId` | string | - | 固定回复的会话 ID |
+| `historyLimit` | number | `10` | 群聊历史消息上限 |
+| `textChunkLimit` | number | `4000` | 单条消息最大字符数 |
+
+### 多账号配置
+
+```yaml
+channels:
+  sharecrm:
+    gatewayUrl: "ws://gateway1:8099"
+    botToken: "..."
+    accounts:
+      sales-bot:
+        gatewayUrl: "ws://gateway2:8099"
+        botToken: "..."
+```
+
+### 环境变量
+
+| 变量 | 说明 |
+|------|------|
+| `SHARECRM_GATEWAY_URL` | Gateway URL 回退值 |
+| `SHARECRM_BOT_TOKEN` | Bot Token 回退值 |
+
+## 架构
+
+```
+ShareCRM 用户 ←→ ShareCRM 服务器 ←→ IM Gateway ←→ [WebSocket] ←→ OpenClaw 插件 ←→ Agent
+```
+
+插件与 ShareCRM IM Gateway 维持持久的 WebSocket 连接，消息双向流动：
+
+1. **入站**：Gateway 推送用户消息 → 插件分发到 Agent 会话
+2. **出站**：Agent 回复 → 插件通过 WebSocket 发送 → Gateway 投递给用户
+
+连接使用 WebSocket 原生 ping/pong 保活，断线后自动重连（延迟 3 秒）。
+
+## 协议
+
+完整 WebSocket 协议规范请参阅 [ShareCRM IM Gateway API 文档](../sharecrm-im-gateway/docs/PLUGIN_API.md)。

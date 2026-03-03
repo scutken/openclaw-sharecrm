@@ -1,70 +1,19 @@
 /**
- * OpenClaw ShareCRM Plugin - Runtime 单例
+ * 插件运行时单例
+ * 存储 api.runtime 中的 PluginRuntime（在 register() 时设置）
  */
 
-/**
- * Channel Runtime 接口（用于消息分发）
- */
-export interface ChannelRuntime {
-  dispatchReplyFromConfig?: (opts: {
-    cfg: Record<string, unknown>;
-    ctx: Record<string, unknown>;
-    deliver: (payload: { text?: string }) => Promise<void>;
-  }) => Promise<void>;
-  [key: string]: unknown;
+import type { PluginRuntime } from "openclaw/plugin-sdk";
+
+let runtime: PluginRuntime | null = null;
+
+export function setShareCrmRuntime(r: PluginRuntime): void {
+  runtime = r;
 }
 
-/**
- * 插件运行时接口
- */
-export interface PluginRuntime {
-  logger: Console;
-  channelRuntime?: ChannelRuntime;
-  channel?: {
-    reply?: {
-      dispatchReplyWithBufferedBlockDispatcher?: (params: {
-        ctx: Record<string, unknown>;
-        cfg: Record<string, unknown>;
-        dispatcherOptions: {
-          deliver: (payload: { text?: string }) => Promise<void>;
-          onError: (err: unknown, info: { kind: string }) => void;
-        };
-      }) => Promise<{ queuedFinal?: boolean }>;
-    };
-  };
-}
-
-let currentRuntime: PluginRuntime | null = null;
-let currentChannelRuntime: ChannelRuntime | null = null;
-
-/**
- * 设置运行时
- */
-export function setShareCrmRuntime(runtime: PluginRuntime, channelRuntime?: ChannelRuntime): void {
-  currentRuntime = runtime;
-  if (channelRuntime) {
-    currentChannelRuntime = channelRuntime;
+export function getShareCrmRuntime(): PluginRuntime {
+  if (!runtime) {
+    throw new Error("ShareCRM 运行时未初始化 - 插件尚未注册");
   }
-}
-
-/**
- * 获取运行时
- */
-export function getShareCrmRuntime(): PluginRuntime | null {
-  return currentRuntime;
-}
-
-/**
- * 获取 ChannelRuntime
- */
-export function getChannelRuntime(): ChannelRuntime | null {
-  return currentChannelRuntime;
-}
-
-/**
- * 重置运行时
- */
-export function resetShareCrmRuntime(): void {
-  currentRuntime = null;
-  currentChannelRuntime = null;
+  return runtime;
 }

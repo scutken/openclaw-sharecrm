@@ -1,80 +1,9 @@
 {
-  "id": "openclaw-sharecrm",
-  "name": "ShareCRM Channel",
-  "description": "OpenClaw ShareCRM Channel Plugin - 通过 ShareCRM-IM-Gateway 接入内部 IM",
-  "version": "1.0.0",
+  "id": "sharecrm",
   "channels": ["sharecrm"],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "properties": {
-      "gatewayUrl": {
-        "type": "string",
-        "description": "ShareCRM IM Gateway WebSocket URL"
-      },
-      "botToken": {
-        "type": "string",
-        "description": "Bot 认证令牌"
-      },
-      "chatId": {
-        "type": "string",
-        "description": "默认回复的聊天 ID (可选)"
-      },
-      "dmPolicy": {
-        "type": "string",
-        "enum": ["pairing", "allowlist", "open", "disabled"],
-        "default": "open",
-        "description": "私聊消息策略"
-      },
-      "allowFrom": {
-        "type": "array",
-        "items": { "type": "string" },
-        "description": "允许发送消息的用户 ID 列表 (allowlist 模式)"
-      },
-      "accounts": {
-        "type": "object",
-        "additionalProperties": {
-          "type": "object",
-          "properties": {
-            "name": { "type": "string" },
-            "enabled": { "type": "boolean", "default": true },
-            "botToken": { "type": "string" },
-            "chatId": { "type": "string" },
-            "dmPolicy": {
-              "type": "string",
-              "enum": ["pairing", "allowlist", "open", "disabled"]
-            },
-            "allowFrom": {
-              "type": "array",
-              "items": { "type": "string" }
-            }
-          }
-        },
-        "description": "多账号配置"
-      }
-    }
-  },
-  "uiHints": {
-    "gatewayUrl": {
-      "label": "Gateway URL",
-      "placeholder": "ws://localhost:8080/ws"
-    },
-    "botToken": {
-      "label": "Bot Token",
-      "sensitive": true,
-      "placeholder": "your-bot-token"
-    },
-    "chatId": {
-      "label": "Default Chat ID",
-      "placeholder": "可选，用于指定默认回复的聊天"
-    },
-    "dmPolicy": {
-      "label": "DM Policy",
-      "placeholder": "open"
-    },
-    "allowFrom": {
-      "label": "Allow From",
-      "placeholder": "用户 ID 列表"
-    }
+    "properties": {}
   }
 }

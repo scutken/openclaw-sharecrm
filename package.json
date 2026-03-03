@@ -1,52 +1,28 @@
 {
-  "name": "openclaw-sharecrm",
+  "name": "@openclaw/sharecrm",
   "version": "1.0.0",
-  "description": "OpenClaw ShareCRM Channel Plugin - 通过 ShareCRM-IM-Gateway 接入内部 IM",
+  "description": "ShareCRM IM Gateway channel plugin for OpenClaw",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "clean": "rimraf dist",
-    "test": "echo \"No tests yet\""
+  "dependencies": {
+    "ws": "^8.18.0",
+    "zod": "^4.3.6"
   },
-  "keywords": [
-    "openclaw",
-    "sharecrm",
-    "channel",
-    "plugin",
-    "im",
-    "gateway"
-  ],
-  "author": "fxiaoke",
-  "license": "MIT",
   "openclaw": {
-    "extensions": ["./index.ts"],
+    "extensions": [
+      "./index.ts"
+    ],
     "channel": {
       "id": "sharecrm",
       "label": "ShareCRM",
-      "selectionLabel": "ShareCRM (内部 IM)",
+      "selectionLabel": "ShareCRM IM Gateway",
       "docsPath": "/channels/sharecrm",
       "docsLabel": "sharecrm",
-      "blurb": "ShareCRM 内部 IM 渠道，通过 WebSocket 双向通信。",
-      "order": 100,
-      "aliases": ["scrm"]
+      "blurb": "Connect ShareCRM IM to OpenClaw via WebSocket gateway.",
+      "order": 95
     },
     "install": {
-      "npmSpec": "openclaw-sharecrm",
-      "localPath": "extensions/openclaw-sharecrm",
-      "defaultChoice": "npm"
+      "localPath": "extensions/sharecrm",
+      "defaultChoice": "local"
     }
-  },
-  "dependencies": {
-    "ws": "^8.16.0",
-    "zod": "^3.23.8"
-  },
-  "devDependencies": {
-    "@types/node": "^20.11.0",
-    "@types/ws": "^8.5.10",
-    "rimraf": "^5.0.5",
-    "typescript": "^5.3.3"
   }
 }

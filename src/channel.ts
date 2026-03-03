@@ -1,344 +1,308 @@
 /**
- * OpenClaw ShareCRM Plugin - Channel 插件入口
- * 简化版：纯 WebSocket 双向通信
+ * ShareCRM OpenClaw 渠道插件
+ *
+ * 实现 ChannelPlugin 接口，通过 WebSocket 连接 ShareCRM IM Gateway
  */
 
-import { ShareCrmClient, type MessageEvent, type SendResult } from "./api.js";
-import { ShareCrmConfigSchema, type ResolvedShareCrmAccount } from "./config-schema.js";
-import { getShareCrmRuntime, getChannelRuntime, setShareCrmRuntime, type PluginRuntime, type ChannelRuntime } from "./runtime.js";
+import type { ChannelMeta, ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk";
+import {
+  buildBaseChannelStatusSummary,
+  createDefaultChannelRuntimeState,
+  DEFAULT_ACCOUNT_ID,
+  PAIRING_APPROVED_MESSAGE,
+} from "openclaw/plugin-sdk";
+import { listAccountIds, resolveAccount } from "./accounts.js";
+import { getActiveClient } from "./monitor.js";
+import type { ResolvedShareCrmAccount, ShareCrmChannelConfig } from "./types.js";
 
-// ============ 全局状态 ============
+const CHANNEL_ID = "sharecrm";
 
-let client: ShareCrmClient | null = null;
-let currentAccount: ResolvedShareCrmAccount | null = null;
+const meta: ChannelMeta = {
+  id: CHANNEL_ID,
+  label: "ShareCRM",
+  selectionLabel: "ShareCRM IM",
+  docsPath: "/channels/sharecrm",
+  docsLabel: "sharecrm",
+  blurb: "ShareCRM IM Gateway messaging.",
+  order: 95,
+};
 
-// ============ Channel 定义 ============
-
-const shareCrmChannel = {
-  id: "sharecrm",
-
+export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
+  id: CHANNEL_ID,
   meta: {
-    id: "sharecrm",
-    label: "ShareCRM",
-    selectionLabel: "ShareCRM (内部 IM)",
-    docsPath: "/channels/sharecrm",
-    docsLabel: "sharecrm",
-    blurb: "ShareCRM 内部 IM 渠道，通过 WebSocket 双向通信。",
-    aliases: ["scrm"],
+    ...meta,
   },
-
-  capabilities: {
-    chatTypes: ["direct", "group"] as const,
-    threads: false,
-    reactions: false,
-    media: false,
-    edit: false,
-    reply: true,
-  },
-
-  configSchema: ShareCrmConfigSchema,
-
-  config: {
-    listAccountIds: (cfg: Record<string, unknown>): string[] => {
-      const channelCfg = (cfg.channels as Record<string, unknown>)?.sharecrm as Record<string, unknown>;
-      return Object.keys(channelCfg?.accounts ?? { default: {} });
-    },
-
-    resolveAccount: (cfg: Record<string, unknown>, accountId?: string): ResolvedShareCrmAccount => {
-      const id = accountId ?? "default";
-      const channelCfg = (cfg.channels as Record<string, unknown>)?.sharecrm as Record<string, unknown>;
-      const accountCfg = (channelCfg?.accounts as Record<string, Record<string, unknown>>)?.[id] ?? channelCfg;
-
-      const gatewayUrl = (accountCfg?.gatewayUrl ?? channelCfg?.gatewayUrl) as string | undefined;
-      const botToken = accountCfg?.botToken as string | undefined;
-
-      const dmPolicy = (accountCfg?.dmPolicy as ResolvedShareCrmAccount["dmPolicy"]) ?? "open";
-      let allowFrom = (accountCfg?.allowFrom as string[]) ?? [];
-      
-      // dmPolicy: "open" 时自动添加通配符
-      if (dmPolicy === "open" && !allowFrom.includes("*")) {
-        allowFrom = ["*", ...allowFrom];
+  pairing: {
+    idLabel: "shareCrmUserId",
+    normalizeAllowEntry: (entry) => entry.replace(/^sharecrm:/i, "").trim(),
+    notifyApproval: async ({ cfg, id }) => {
+      const account = resolveAccount(cfg);
+      const client = getActiveClient(account.accountId);
+      if (client) {
+        // For pairing approval, we need to determine the chat_id.
+        // In ShareCRM, DM chat_id may differ from user ID.
+        // Try sending to the user ID as chat_id (common pattern).
+        await client.sendMessage(id, PAIRING_APPROVED_MESSAGE);
       }
-
+    },
+  },
+  capabilities: {
+    chatTypes: ["direct", "channel"],
+    polls: false,
+    threads: false,
+    media: false,
+    reactions: false,
+    edit: false,
+    reply: false,
+  },
+  agentPrompt: {
+    messageToolHints: () => [
+      "- ShareCRM targeting: omit `target` to reply to the current conversation (auto-inferred). Explicit targets: `user:<userId>` or `chat:<chatId>`.",
+      "- ShareCRM supports text messages only. No markdown rendering, no cards, no media uploads.",
+      "- Keep messages concise and well-structured using plain text formatting.",
+    ],
+  },
+  reload: { configPrefixes: [`channels.${CHANNEL_ID}`] },
+  configSchema: {
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        enabled: { type: "boolean" },
+        gatewayUrl: { type: "string" },
+        botToken: { type: "string" },
+        dmPolicy: {
+          type: "string",
+          enum: ["open", "pairing", "allowlist", "disabled"],
+        },
+        allowFrom: {
+          type: "array",
+          items: { oneOf: [{ type: "string" }, { type: "number" }] },
+        },
+        groupPolicy: {
+          type: "string",
+          enum: ["open", "allowlist", "disabled"],
+        },
+        groupAllowFrom: {
+          type: "array",
+          items: { oneOf: [{ type: "string" }, { type: "number" }] },
+        },
+        requireMention: { type: "boolean" },
+        chatId: { type: "string" },
+        historyLimit: { type: "integer", minimum: 0 },
+        textChunkLimit: { type: "integer", minimum: 1 },
+        accounts: {
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            properties: {
+              enabled: { type: "boolean" },
+              name: { type: "string" },
+              gatewayUrl: { type: "string" },
+              botToken: { type: "string" },
+            },
+          },
+        },
+      },
+    },
+  },
+  config: {
+    listAccountIds: (cfg) => listAccountIds(cfg),
+    resolveAccount: (cfg, accountId) => resolveAccount(cfg, accountId),
+    defaultAccountId: (_cfg) => DEFAULT_ACCOUNT_ID,
+    setAccountEnabled: ({ cfg, accountId, enabled }) => {
+      const channelCfg = cfg?.channels?.[CHANNEL_ID] as ShareCrmChannelConfig | undefined;
+      if (accountId === DEFAULT_ACCOUNT_ID) {
+        return {
+          ...cfg,
+          channels: {
+            ...cfg.channels,
+            [CHANNEL_ID]: {
+              ...channelCfg,
+              enabled,
+            },
+          },
+        };
+      }
       return {
-        accountId: id,
-        enabled: (accountCfg?.enabled as boolean) ?? true,
-        configured: !!(gatewayUrl && botToken),
-        gatewayUrl: gatewayUrl ?? "",
-        botToken: botToken ?? "",
-        chatId: accountCfg?.chatId as string | undefined,
-        dmPolicy,
-        allowFrom,
+        ...cfg,
+        channels: {
+          ...cfg.channels,
+          [CHANNEL_ID]: {
+            ...channelCfg,
+            accounts: {
+              ...channelCfg?.accounts,
+              [accountId]: {
+                ...channelCfg?.accounts?.[accountId],
+                enabled,
+              },
+            },
+          },
+        },
+      };
+    },
+    deleteAccount: ({ cfg, accountId }) => {
+      if (accountId === DEFAULT_ACCOUNT_ID) {
+        const next = { ...cfg } as OpenClawConfig;
+        const nextChannels = { ...cfg.channels };
+        delete (nextChannels as Record<string, unknown>)[CHANNEL_ID];
+        if (Object.keys(nextChannels).length > 0) {
+          next.channels = nextChannels;
+        } else {
+          delete next.channels;
+        }
+        return next;
+      }
+      const channelCfg = cfg?.channels?.[CHANNEL_ID] as ShareCrmChannelConfig | undefined;
+      const accounts = { ...channelCfg?.accounts };
+      delete accounts[accountId];
+      return {
+        ...cfg,
+        channels: {
+          ...cfg.channels,
+          [CHANNEL_ID]: {
+            ...channelCfg,
+            accounts: Object.keys(accounts).length > 0 ? accounts : undefined,
+          },
+        },
+      };
+    },
+    isConfigured: (account) => account.configured,
+    describeAccount: (account) => ({
+      accountId: account.accountId,
+      enabled: account.enabled,
+      configured: account.configured,
+      name: account.name,
+      gatewayUrl: account.gatewayUrl,
+    }),
+    resolveAllowFrom: ({ cfg, accountId }) => {
+      const account = resolveAccount(cfg, accountId);
+      return (account.config?.allowFrom ?? []).map((entry) => String(entry));
+    },
+    formatAllowFrom: ({ allowFrom }) =>
+      allowFrom
+        .map((entry) => String(entry).trim())
+        .filter(Boolean),
+  },
+  security: {
+    collectWarnings: ({ cfg, accountId }) => {
+      const account = resolveAccount(cfg, accountId);
+      const warnings: string[] = [];
+      if (!account.configured) {
+        warnings.push(
+          `- ShareCRM[${account.accountId}]: not configured (missing gatewayUrl or botToken).`,
+        );
+      }
+      if (account.config?.dmPolicy === "open") {
+        warnings.push(
+          `- ShareCRM[${account.accountId}]: dmPolicy="open" allows any user to message the bot.`,
+        );
+      }
+      return warnings;
+    },
+  },
+  setup: {
+    resolveAccountId: () => DEFAULT_ACCOUNT_ID,
+    applyAccountConfig: ({ cfg, accountId }) => {
+      const isDefault = !accountId || accountId === DEFAULT_ACCOUNT_ID;
+      if (isDefault) {
+        return {
+          ...cfg,
+          channels: {
+            ...cfg.channels,
+            [CHANNEL_ID]: {
+              ...(cfg.channels as any)?.[CHANNEL_ID],
+              enabled: true,
+            },
+          },
+        };
+      }
+      const channelCfg = (cfg.channels as any)?.[CHANNEL_ID] as ShareCrmChannelConfig | undefined;
+      return {
+        ...cfg,
+        channels: {
+          ...cfg.channels,
+          [CHANNEL_ID]: {
+            ...channelCfg,
+            accounts: {
+              ...channelCfg?.accounts,
+              [accountId]: {
+                ...channelCfg?.accounts?.[accountId],
+                enabled: true,
+              },
+            },
+          },
+        },
       };
     },
   },
-
-  outbound: {
-    deliveryMode: "direct" as const,
-
-    sendText: async (ctx: {
-      text: string;
-      channelId: string;
-      accountId?: string;
-      replyTo?: string;
-    }): Promise<{ ok: boolean; error?: string }> => {
-      if (!client) {
-        return { ok: false, error: "未连接" };
-      }
-
-      const runtime = getShareCrmRuntime();
-      runtime?.logger?.info(`[ShareCRM] 发送消息: channelId=${ctx.channelId}`);
-
-      const result = await client.sendMessage(ctx.channelId, ctx.text);
-      return { ok: result.ok, error: result.error };
+  messaging: {
+    normalizeTarget: (raw) => {
+      const trimmed = raw.trim();
+      if (!trimmed) return undefined;
+      return trimmed.replace(/^(sharecrm|user|chat):/i, "").trim() || undefined;
+    },
+    targetResolver: {
+      looksLikeId: (id) => {
+        const trimmed = id?.trim();
+        if (!trimmed) return false;
+        return /^(ch-|u-|sharecrm:|user:|chat:)/i.test(trimmed) || trimmed.length > 2;
+      },
+      hint: "<chatId|user:userId|chat:chatId>",
     },
   },
-
-  gateway: {
-    startAccount: async (
-      params: {
-        cfg: Record<string, unknown>;
-        runtime: PluginRuntime;
-        abortSignal: AbortSignal;
-        accountId?: string;
-        channelRuntime?: {
-          dispatchReplyFromConfig: (opts: {
-            cfg: Record<string, unknown>;
-            ctx: Record<string, unknown>;
-            deliver: (payload: { text?: string }) => Promise<void>;
-          }) => Promise<void>;
-        };
-        [key: string]: unknown;
+  directory: {
+    self: async () => null,
+    listPeers: async () => [],
+    listGroups: async () => [],
+  },
+  outbound: {
+    deliveryMode: "direct",
+    textChunkLimit: 4000,
+    sendText: async ({ cfg, to, text, accountId }) => {
+      const account = resolveAccount(cfg, accountId ?? undefined);
+      const client = getActiveClient(account.accountId);
+      if (!client) {
+        throw new Error(`ShareCRM client not connected for account ${account.accountId}`);
       }
-    ): Promise<void> => {
-      const { cfg, runtime, abortSignal, accountId } = params;
-      const logger = runtime?.logger ?? console;
-      
-      // 调试：打印 params 所有 keys
-      logger.info(`[ShareCRM] startAccount params keys: ${Object.keys(params).join(", ")}`);
-      const runtimeAny = runtime as unknown as Record<string, unknown>;
-      if (runtimeAny?.channelRuntime) {
-        logger.info(`[ShareCRM] runtime.channelRuntime keys: ${Object.keys(runtimeAny.channelRuntime as object).join(", ")}`);
+      const chatId = to.replace(/^(user:|chat:)/i, "");
+      const result = await client.sendMessage(chatId, text);
+      if (!result) {
+        throw new Error("ShareCRM: failed to send message");
       }
-      
-      // 先断开现有连接（防止 auto-restart 导致重复连接）
-      if (client) {
-        logger.info(`[ShareCRM] 清理现有连接...`);
-        client.disconnect();
-        client = null;
-      }
-      
-      // 直接保存 runtime 和 channelRuntime
-      const channelRt = runtimeAny?.channelRuntime as ChannelRuntime | undefined;
-      setShareCrmRuntime(runtime, channelRt);
-      logger.info(`[ShareCRM] channelRuntime 已保存: ${channelRt ? "是" : "否"}`);
-
-      const account = shareCrmChannel.config.resolveAccount(cfg, accountId);
-      currentAccount = account;
-
-      if (!account.enabled) {
-        logger.info(`[ShareCRM] 账号 ${account.accountId} 未启用`);
-        return;
-      }
-
-      if (!account.configured) {
-        logger.warn(`[ShareCRM] 账号 ${account.accountId} 配置不完整，需要 gatewayUrl 和 botToken`);
-        return;
-      }
-
-      // 创建客户端
-      client = new ShareCrmClient({
-        gatewayUrl: account.gatewayUrl,
-        botToken: account.botToken,
-        logger: logger,
-
-        onMessage: (event) => {
-          handleInboundMessage(event, account, cfg, channelRt);
-        },
-
-        onConnected: (info) => {
-          logger.info(`[ShareCRM] 已连接: ${info.result?.bot_name ?? "Bot"}`);
-        },
-
-        onDisconnected: (reason) => {
-          logger.warn(`[ShareCRM] 连接断开: ${reason}，3秒后重连`);
-          if (!abortSignal.aborted) {
-            setTimeout(() => client?.connect(), 3000);
-          }
-        },
-
-        onError: (error) => {
-          logger.error(`[ShareCRM] 错误: ${error.message}`);
-        },
-      });
-
-      // 建立连接
-      client.connect();
-
-      // 监听中止信号（不阻塞初始化）
-      abortSignal.addEventListener("abort", () => {
-        logger.info(`[ShareCRM] 收到中止信号，断开连接`);
-        client?.disconnect();
-        client = null;
-        currentAccount = null;
-      });
-      
-      // 立即返回，不阻塞 Gateway 初始化
+      return { channel: CHANNEL_ID, ...result };
     },
-
-    stopAccount: (accountId?: string): void => {
-      client?.disconnect();
-      client = null;
-      currentAccount = null;
+  },
+  status: {
+    defaultRuntime: createDefaultChannelRuntimeState(DEFAULT_ACCOUNT_ID, {}),
+    buildChannelSummary: ({ snapshot }) => ({
+      ...buildBaseChannelStatusSummary(snapshot),
+    }),
+    buildAccountSnapshot: ({ account, runtime }) => ({
+      accountId: account.accountId,
+      enabled: account.enabled,
+      configured: account.configured,
+      name: account.name,
+      gatewayUrl: account.gatewayUrl,
+      running: runtime?.running ?? false,
+      lastStartAt: runtime?.lastStartAt ?? null,
+      lastStopAt: runtime?.lastStopAt ?? null,
+      lastError: runtime?.lastError ?? null,
+    }),
+  },
+  gateway: {
+    startAccount: async (ctx) => {
+      const { monitorShareCrmProvider } = await import("./monitor.js");
+      const account = resolveAccount(ctx.cfg, ctx.accountId);
+      ctx.log?.info(
+        `starting sharecrm[${ctx.accountId}] (gateway: ${account.gatewayUrl || "not configured"})`,
+      );
+      return monitorShareCrmProvider({
+        config: ctx.cfg,
+        runtime: ctx.runtime,
+        abortSignal: ctx.abortSignal,
+        accountId: ctx.accountId,
+      });
     },
   },
 };
-
-// ============ 入站消息处理 ============
-
-/**
- * 处理入站消息
- */
-async function handleInboundMessage(
-  event: MessageEvent,
-  account: ResolvedShareCrmAccount,
-  cfg: Record<string, unknown>,
-  channelRuntime?: ChannelRuntime
-): Promise<void> {
-  const runtime = getShareCrmRuntime();
-  const logger = runtime?.logger ?? console;
-
-  // 权限检查
-  if (!checkPermission(account, event)) {
-    logger.info(`[ShareCRM] 消息被策略拒绝: from=${event.from.id}`);
-    return;
-  }
-
-  // 构造消息上下文
-  const targetId = event.chat_type === "direct" ? event.from.id : event.chat_id;
-  const sessionKey = `agent:main:sharecrm:${event.chat_type}:${targetId}`;
-
-  const msgContext = {
-    Provider: "sharecrm",
-    Surface: "sharecrm",
-    Channel: "sharecrm",
-    From: event.from.id,
-    To: event.chat_id,
-    Body: event.text,
-    RawBody: event.text,
-    BodyForCommands: event.text,
-    BodyForAgent: event.text,
-    ChatType: event.chat_type,
-    AccountId: account.accountId,
-    MessageSid: event.message_id,
-    MessageSidFull: `sharecrm:${event.message_id}`,
-    SessionKey: sessionKey,
-    SenderId: event.from.id,
-    Timestamp: event.date * 1000,
-  };
-
-  logger.info(`[ShareCRM] 收到消息: from=${event.from.name}, text=${event.text.substring(0, 50)}`);
-  
-  // 调试：打印 runtime 可用的 API
-  logger.info(`[ShareCRM] runtime keys: ${Object.keys(runtime || {}).join(", ")}`);
-  logger.info(`[ShareCRM] channelRuntime 可用: ${channelRuntime ? "是" : "否"}`);
-  if (channelRuntime) {
-    logger.info(`[ShareCRM] channelRuntime keys: ${Object.keys(channelRuntime).join(", ")}`);
-  }
-
-  // 定义 deliver 函数
-  const deliver = async (payload: { text?: string }) => {
-    const replyText = payload.text || "";
-    if (!replyText.trim()) return;
-
-    const targetChatId = account.chatId || event.chat_id;
-    const result = await client?.sendMessage(targetChatId, replyText);
-
-    if (!result?.ok) {
-      logger.error(`[ShareCRM] 回复失败: ${result?.error}`);
-    }
-  };
-
-  // 优先使用 channelRuntime.dispatchReplyFromConfig
-  if (channelRuntime?.dispatchReplyFromConfig) {
-    try {
-      logger.info(`[ShareCRM] 使用 channelRuntime.dispatchReplyFromConfig 分发消息`);
-      await channelRuntime.dispatchReplyFromConfig({
-        cfg,
-        ctx: msgContext,
-        deliver,
-      });
-    } catch (err) {
-      logger.error(`[ShareCRM] dispatchReplyFromConfig 异常: ${err}`);
-    }
-  } else if (runtime?.channel?.reply?.dispatchReplyWithBufferedBlockDispatcher) {
-    // 回退到旧 API
-    try {
-      await runtime.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
-        ctx: msgContext,
-        cfg,
-        dispatcherOptions: {
-          deliver,
-          onError: (err: unknown, info: { kind: string }) => {
-            logger.error(`[ShareCRM] 处理错误 (${info.kind}): ${err}`);
-          },
-        },
-      });
-    } catch (err) {
-      logger.error(`[ShareCRM] 消息处理异常: ${err}`);
-    }
-  } else {
-    logger.info(`[ShareCRM] 消息上下文:`, JSON.stringify(msgContext, null, 2));
-  }
-}
-
-/**
- * 检查消息权限
- */
-function checkPermission(account: ResolvedShareCrmAccount, event: MessageEvent): boolean {
-  const { dmPolicy, allowFrom } = account;
-
-  if (event.chat_type === "direct") {
-    switch (dmPolicy) {
-      case "open":
-        return true;
-      case "pairing":
-        return true;
-      case "allowlist":
-        return allowFrom.includes("*") || allowFrom.includes(event.from.id.toLowerCase());
-      case "disabled":
-        return false;
-    }
-  }
-
-  // 群聊默认允许
-  return true;
-}
-
-// ============ 插件注册 ============
-
-interface PluginApi {
-  logger: Console;
-  registerChannel: (opts: { plugin: typeof shareCrmChannel }) => void;
-  [key: string]: unknown;
-}
-
-let pluginApi: PluginApi | null = null;
-
-export function getPluginApi(): PluginApi | null {
-  return pluginApi;
-}
-
-export default function register(api: PluginApi): void {
-  pluginApi = api;
-  const logger = api?.logger ?? console;
-  logger.info("[ShareCRM] 插件加载中...");
-  
-  // 调试：打印 api 对象的所有 keys
-  logger.info(`[ShareCRM] api keys: ${Object.keys(api).join(", ")}`);
-  
-  api.registerChannel({ plugin: shareCrmChannel });
-  logger.info("[ShareCRM] Channel 已注册");
-}
-
-export { shareCrmChannel };
