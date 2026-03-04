@@ -1,36 +1,35 @@
 /**
- * ShareCRM IM Gateway 的 WebSocket 客户端
+ * ShareCRM IM Gateway 的客户端
  *
- * 管理 WebSocket 连接、消息收发和自动重连
+ * 架构：WebSocket 下行 + REST API 上行
+ * - WebSocket: 接收服务端推送的消息（connected, message, error）
+ * - REST API: 发送消息到服务端
  */
 
 import WebSocket from "ws";
 import type {
   ShareCrmServerMessage,
-  ShareCrmSendResultInfo,
   ResolvedShareCrmAccount,
+  AuthTokenResponse,
+  SendMessageResponse,
 } from "./types.js";
 
 const RECONNECT_DELAY_MS = 3000;
-const SEND_TIMEOUT_MS = 10_000;
+const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000; // 提前 5 分钟刷新 Token
 
 export type ShareCrmClientOptions = {
   account: ResolvedShareCrmAccount;
-  onConnected: (botId: string, botName: string) => void;
+  onConnected: (botId: string) => void;
   onMessage: (data: ShareCrmServerMessage & { type: "message" }) => void;
   onDisconnected: (reason: string) => void;
   onError?: (error: Error) => void;
   log?: (...args: any[]) => void;
 };
 
-type PendingRequest = {
-  resolve: (result: { ok: boolean; messageId?: string }) => void;
-  timeout: ReturnType<typeof setTimeout>;
-};
-
 export class ShareCrmClient {
   private ws: WebSocket | null = null;
-  private pendingRequests = new Map<string, PendingRequest>();
+  private accessToken: string | null = null;
+  private tokenExpiresAt: number = 0;
   private options: ShareCrmClientOptions;
   private shouldReconnect = true;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -44,56 +43,93 @@ export class ShareCrmClient {
     return this._connected;
   }
 
-  /** 根据账号配置构建 WebSocket URL */
-  private buildUrl(): string {
-    const { gatewayUrl, botToken } = this.options.account;
-    // gatewayUrl 格式为 "ws://localhost:8099"，botToken 已 Base64 编码
-    return `${gatewayUrl}/bot${botToken}`;
+  /** 获取 AccessToken */
+  private async fetchAccessToken(): Promise<string> {
+    const { apiBaseUrl, appId, appSecret } = this.options.account;
+
+    const response = await fetch(`${apiBaseUrl}/im-gateway/auth/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ appId, appSecret }),
+    });
+
+    const data: AuthTokenResponse = await response.json();
+
+    if (data.code !== 0 || !data.data) {
+      throw new Error(data.message || "获取 Token 失败");
+    }
+
+    this.accessToken = data.data.accessToken;
+    // 提前 5 分钟刷新
+    this.tokenExpiresAt = Date.now() + data.data.expiresIn * 1000 - TOKEN_REFRESH_BUFFER_MS;
+
+    return this.accessToken;
+  }
+
+  /** 确保 Token 有效 */
+  private async ensureToken(): Promise<string> {
+    if (this.accessToken && Date.now() < this.tokenExpiresAt) {
+      return this.accessToken;
+    }
+    return this.fetchAccessToken();
+  }
+
+  /** 构建 WebSocket URL */
+  private async buildUrl(): Promise<string> {
+    const token = await this.ensureToken();
+    const { gatewayUrl } = this.options.account;
+    return `${gatewayUrl}/im-gateway/bot?token=${token}`;
   }
 
   /** 连接到 Gateway */
-  connect(): void {
+  async connect(): Promise<void> {
     if (this.ws) {
       return;
     }
 
-    const url = this.buildUrl();
     const log = this.options.log ?? console.log;
 
-    log(`sharecrm: 正在连接 ${url.replace(/\/bot.+$/, "/bot***")}`);
+    try {
+      const url = await this.buildUrl();
+      log(`sharecrm: 正在连接 ${url.replace(/\?token=.+$/, "?token=***")}`);
 
-    this.ws = new WebSocket(url);
+      this.ws = new WebSocket(url);
 
-    this.ws.on("open", () => {
-      log("sharecrm: WebSocket 连接已建立");
-    });
+      this.ws.on("open", () => {
+        log("sharecrm: WebSocket 连接已建立");
+      });
 
-    this.ws.on("message", (raw) => {
-      try {
-        const msg: ShareCrmServerMessage = JSON.parse(raw.toString());
-        this.handleMessage(msg);
-      } catch (err) {
-        log(`sharecrm: 消息解析失败: ${String(err)}`);
-      }
-    });
+      this.ws.on("message", (raw) => {
+        try {
+          const msg: ShareCrmServerMessage = JSON.parse(raw.toString());
+          this.handleMessage(msg);
+        } catch (err) {
+          log(`sharecrm: 消息解析失败: ${String(err)}`);
+        }
+      });
 
-    this.ws.on("close", (code, reason) => {
-      this._connected = false;
-      const reasonStr = reason?.toString() || `code: ${code}`;
-      log(`sharecrm: WebSocket 已关闭: ${reasonStr}`);
-      this.ws = null;
-      this.options.onDisconnected(reasonStr);
+      this.ws.on("close", (code, reason) => {
+        this._connected = false;
+        const reasonStr = reason?.toString() || `code: ${code}`;
+        log(`sharecrm: WebSocket 已关闭: ${reasonStr}`);
+        this.ws = null;
+        this.options.onDisconnected(reasonStr);
+        this.scheduleReconnect();
+      });
+
+      this.ws.on("error", (error) => {
+        log(`sharecrm: WebSocket 错误: ${String(error)}`);
+        this.options.onError?.(error);
+      });
+
+      this.ws.on("ping", () => {
+        // ws 库默认自动响应服务端 ping
+      });
+    } catch (err) {
+      log(`sharecrm: 连接失败: ${String(err)}`);
+      this.options.onError?.(err instanceof Error ? err : new Error(String(err)));
       this.scheduleReconnect();
-    });
-
-    this.ws.on("error", (error) => {
-      log(`sharecrm: WebSocket 错误: ${String(error)}`);
-      this.options.onError?.(error);
-    });
-
-    this.ws.on("ping", () => {
-      // ws 库默认自动响应服务端 ping
-    });
+    }
   }
 
   /** 处理服务端消息 */
@@ -103,72 +139,53 @@ export class ShareCrmClient {
     switch (msg.type) {
       case "connected":
         this._connected = true;
-        log(`sharecrm: 已认证为 ${msg.data.bot_name} (${msg.data.bot_id})`);
-        this.options.onConnected(msg.data.bot_id, msg.data.bot_name);
+        log(`sharecrm: 已认证为 ${msg.data.bot_id}`);
+        this.options.onConnected(msg.data.bot_id);
         break;
 
       case "message":
         this.options.onMessage(msg as ShareCrmServerMessage & { type: "message" });
         break;
 
-      case "send_result": {
-        const pending = this.pendingRequests.get(msg.id);
-        if (pending) {
-          clearTimeout(pending.timeout);
-          this.pendingRequests.delete(msg.id);
-          pending.resolve({ ok: msg.ok, messageId: msg.data?.message_id });
-        }
-        break;
-      }
-
-      case "error": {
+      case "error":
         log(`sharecrm: 错误 [${msg.error.code}]: ${msg.error.message}`);
-        if (msg.id) {
-          const pending = this.pendingRequests.get(msg.id);
-          if (pending) {
-            clearTimeout(pending.timeout);
-            this.pendingRequests.delete(msg.id);
-            pending.resolve({ ok: false });
-          }
-        }
+        this.options.onError?.(new Error(`[${msg.error.code}] ${msg.error.message}`));
         break;
-      }
     }
   }
 
-  /** 通过 Gateway 发送消息到指定会话 */
-  async sendMessage(chatId: string, text: string): Promise<ShareCrmSendResultInfo | null> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      return null;
-    }
+  /** 通过 REST API 发送消息到指定会话 */
+  async sendMessage(chatId: string, text: string): Promise<{ messageId: string; chatId: string } | null> {
+    try {
+      const token = await this.ensureToken();
+      const { apiBaseUrl } = this.options.account;
 
-    const id = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        this.pendingRequests.delete(id);
-        resolve(null);
-      }, SEND_TIMEOUT_MS);
-
-      this.pendingRequests.set(id, {
-        resolve: (result) => {
-          if (result.ok && result.messageId) {
-            resolve({ messageId: result.messageId, chatId });
-          } else {
-            resolve(null);
-          }
+      const response = await fetch(`${apiBaseUrl}/im-gateway/qixin/message/send`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
         },
-        timeout,
+        body: JSON.stringify({
+          chat_id: chatId,
+          text,
+        }),
       });
 
-      this.ws!.send(
-        JSON.stringify({
-          type: "send",
-          id,
-          data: { chat_id: chatId, text },
-        }),
-      );
-    });
+      const data: SendMessageResponse = await response.json();
+
+      if (data.code === 0 && data.data?.message_id) {
+        return { messageId: data.data.message_id, chatId };
+      }
+
+      const log = this.options.log ?? console.log;
+      log(`sharecrm: 发送消息失败: ${data.message || "未知错误"}`);
+      return null;
+    } catch (err) {
+      const log = this.options.log ?? console.log;
+      log(`sharecrm: 发送消息异常: ${String(err)}`);
+      return null;
+    }
   }
 
   /** 安排重连尝试 */
@@ -194,12 +211,6 @@ export class ShareCrmClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    // 清理所有待处理请求
-    for (const [id, pending] of this.pendingRequests) {
-      clearTimeout(pending.timeout);
-      pending.resolve({ ok: false });
-    }
-    this.pendingRequests.clear();
     if (this.ws) {
       this.ws.close();
       this.ws = null;

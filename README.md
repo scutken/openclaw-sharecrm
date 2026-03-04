@@ -5,6 +5,7 @@
 ## 概述
 
 本插件通过 WebSocket 连接 ShareCRM IM Gateway，支持以下功能：
+
 - 接收并回复 ShareCRM 用户的私聊消息
 - 参与群组聊天
 - 断线自动重连
@@ -43,17 +44,18 @@ echo -n "bot-001:secret123" | base64
 
 ## 配置参考
 
-| 选项 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `gatewayUrl` | string | 必填 | IM Gateway 的 WebSocket 地址 |
-| `botToken` | string | 必填 | Base64 编码的 `appId:appSecret` |
-| `dmPolicy` | string | `"open"` | 私聊策略：`open`（开放）、`pairing`（配对）、`allowlist`（白名单）、`disabled`（禁用） |
-| `allowFrom` | string[] | `[]` | 白名单用户 ID 列表（`dmPolicy=allowlist` 时使用） |
-| `groupPolicy` | string | `"disabled"` | 群聊策略：`open`、`allowlist`、`disabled` |
-| `groupAllowFrom` | string[] | `[]` | 白名单群组 ID 列表 |
-| `chatId` | string | - | 固定回复的会话 ID |
-| `historyLimit` | number | `10` | 群聊历史消息上限 |
-| `textChunkLimit` | number | `4000` | 单条消息最大字符数 |
+
+| 选项             | 类型     | 默认值       | 说明                                                                                   |
+| ---------------- | -------- | ------------ | -------------------------------------------------------------------------------------- |
+| `gatewayUrl`     | string   | 必填         | IM Gateway 的 WebSocket 地址                                                           |
+| `botToken`       | string   | 必填         | Base64 编码的`appId:appSecret`                                                         |
+| `dmPolicy`       | string   | `"open"`     | 私聊策略：`open`（开放）、`pairing`（配对）、`allowlist`（白名单）、`disabled`（禁用） |
+| `allowFrom`      | string[] | `[]`         | 白名单用户 ID 列表（`dmPolicy=allowlist` 时使用）                                      |
+| `groupPolicy`    | string   | `"disabled"` | 群聊策略：`open`、`allowlist`、`disabled`                                              |
+| `groupAllowFrom` | string[] | `[]`         | 白名单群组 ID 列表                                                                     |
+| `chatId`         | string   | -            | 固定回复的会话 ID                                                                      |
+| `historyLimit`   | number   | `10`         | 群聊历史消息上限                                                                       |
+| `textChunkLimit` | number   | `4000`       | 单条消息最大字符数                                                                     |
 
 ### 多账号配置
 
@@ -70,10 +72,11 @@ channels:
 
 ### 环境变量
 
-| 变量 | 说明 |
-|------|------|
+
+| 变量                   | 说明               |
+| ---------------------- | ------------------ |
 | `SHARECRM_GATEWAY_URL` | Gateway URL 回退值 |
-| `SHARECRM_BOT_TOKEN` | Bot Token 回退值 |
+| `SHARECRM_BOT_TOKEN`   | Bot Token 回退值   |
 
 ## 架构
 
@@ -90,4 +93,4 @@ ShareCRM 用户 ←→ ShareCRM 服务器 ←→ IM Gateway ←→ [WebSocket] �
 
 ## 协议
 
-完整 WebSocket 协议规范请参阅 [ShareCRM IM Gateway API 文档](../sharecrm-im-gateway/docs/PLUGIN_API.md)。
+完整 WebSocket 协议规范请参阅 [ShareCRM IM Gateway API 文档](./GATEWAY_API.md)。
