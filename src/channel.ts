@@ -12,6 +12,7 @@ import {
   PAIRING_APPROVED_MESSAGE,
 } from "openclaw/plugin-sdk";
 import { listAccountIds, resolveAccount } from "./accounts.js";
+import { shareCrmOnboardingAdapter } from "./onboarding.js";
 import {
   getActiveClient,
   resolveDirectChatIdForUser,
@@ -36,6 +37,7 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
   meta: {
     ...meta,
   },
+  onboarding: shareCrmOnboardingAdapter,
   pairing: {
     idLabel: "shareCrmUserId",
     normalizeAllowEntry: (entry) => entry.replace(/^sharecrm:/i, "").trim(),

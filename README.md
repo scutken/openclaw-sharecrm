@@ -1,26 +1,20 @@
-# ShareCRM IM Gateway 渠道插件（OpenClaw）
+# OpenClaw纷享销客插件
 
-通过 ShareCRM IM Gateway 将你的 OpenClaw Agent 接入 ShareCRM 即时通讯。
+将你的 OpenClaw Agent 接入 纷享销客（ShareCRM）企信 。
 
 ## 概述
 
-本插件通过 WebSocket 连接 ShareCRM IM Gateway，支持以下功能：
+本插件通过 WebSocket 纷享销客（ShareCRM）企信，支持以下功能：
 
-- 接收并回复 ShareCRM 用户的私聊消息
-- 参与群组聊天
-- 断线自动重连
-- 支持私聊配对 / 白名单策略
+- [x] 接收并回复 ShareCRM 用户的私聊消息
+- [x] 断线自动重连
+- [ ] 参与群组聊天
 
 ## 快速开始
 
 ### 1. 安装插件
 
-在 `openclaw.yaml` 中添加扩展：
 
-```yaml
-extensions:
-  - ./extensions/sharecrm
-```
 
 ### 2. 配置渠道
 
