@@ -2,11 +2,16 @@ package com.fxiaoke.sharecrm.im.gateway;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.mongo.MongoAutoConfiguration;
+import org.springframework.context.annotation.ImportResource;
 
 /**
  * ShareCRM IM Gateway 应用启动类
+ *
  */
-@SpringBootApplication
+@SpringBootApplication(
+        exclude = {MongoAutoConfiguration.class})
+@ImportResource(value = "classpath:/spring/fs-qixin-rest-client.xml")
 public class ImGatewayApplication {
 
     public static void main(String[] args) {

@@ -4,11 +4,6 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.springframework.data.annotation.Id;
-import org.springframework.data.relational.core.mapping.Column;
-import org.springframework.data.relational.core.mapping.Table;
-
-import java.time.LocalDateTime;
 
 /**
  * 账号实体
@@ -17,28 +12,26 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Table("accounts")
 public class Account {
 
-    @Id
-    @Column("id")
-    private Long id;
-
-    @Column("app_id")
+    /**
+     * 应用ID
+     */
     private String appId;
 
-    @Column("app_secret")
+    /**
+     * 应用密钥
+     */
     private String appSecret;
 
-    @Column("bot_name")
-    private String botName;
+    /**
+     * 企信侧 Bot 完整 ID
+     * 格式示例：B.ea.botId
+     */
+    private String botFullId;
 
-    @Column("enabled")
-    private Boolean enabled;
-
-    @Column("created_at")
-    private LocalDateTime createdAt;
-
-    @Column("updated_at")
-    private LocalDateTime updatedAt;
+    /**
+     * 是否启用，默认启用
+     */
+    private Boolean enabled = true;
 }

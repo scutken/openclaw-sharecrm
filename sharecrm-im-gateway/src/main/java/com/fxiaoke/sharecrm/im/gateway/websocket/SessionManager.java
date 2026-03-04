@@ -1,14 +1,12 @@
 package com.fxiaoke.sharecrm.im.gateway.websocket;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fxiaoke.sharecrm.im.gateway.qixin.QixinMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -87,19 +85,20 @@ public class SessionManager {
                                   String userId, String userName) {
         getBotSession(appId).ifPresent(session -> {
             try {
+                Map<String, Object> data = new LinkedHashMap<>();
+                data.put("message_id", messageId);
+                data.put("chat_id", chatId);
+                data.put("chat_type", "direct");
+                data.put("from", Map.of(
+                    "id", userId,
+                    "name", userName
+                ));
+                data.put("text", text);
+                data.put("date", System.currentTimeMillis() / 1000);
+
                 String json = objectMapper.writeValueAsString(Map.of(
                     "type", "message",
-                    "data", Map.of(
-                        "message_id", messageId,
-                        "chat_id", chatId,
-                        "chat_type", "direct",
-                        "from", Map.of(
-                            "id", userId,
-                            "name", userName
-                        ),
-                        "text", text,
-                        "date", System.currentTimeMillis() / 1000
-                    )
+                    "data", data
                 ));
                 session.send(json);
                 log.debug("发送消息到 Bot: appId={}, chatId={}", appId, chatId);
@@ -107,6 +106,63 @@ public class SessionManager {
                 log.error("发送消息到 Bot 失败: {}", e.getMessage());
             }
         });
+    }
+
+    /**
+     * 向 Bot 发送企信格式消息
+     * 
+     * 包含完整的企信上下文信息
+     */
+    public void sendQixinMessageToBot(String appId, String chatId, String messageId, String text,
+                                       String userId, String userName, String chatType, QixinMessage.InboundMessage qixinMessage) {
+        getBotSession(appId).ifPresent(session -> {
+            try {
+                Map<String, Object> data = new LinkedHashMap<>();
+                data.put("message_id", messageId);
+                data.put("chat_id", chatId);
+                data.put("chat_type", normalizeChatType(chatType));
+                data.put("from", Map.of(
+                    "id", userId,
+                    "name", userName
+                ));
+                data.put("text", text);
+                data.put("date", qixinMessage.getMessageTimestamp() != null 
+                        ? qixinMessage.getMessageTimestamp() / 1000 
+                        : System.currentTimeMillis() / 1000);
+                
+                // 添加企信特有字段
+                Map<String, Object> qixinContext = new LinkedHashMap<>();
+                qixinContext.put("env", qixinMessage.getEnv());
+                qixinContext.put("ea", qixinMessage.getEa());
+                qixinContext.put("session_id", qixinMessage.getSessionId());
+                qixinContext.put("parent_session_id", qixinMessage.getParentSessionId());
+                qixinContext.put("bot_full_id", qixinMessage.getBotFullId());
+                qixinContext.put("message_type", qixinMessage.getMessageType());
+                qixinContext.put("qixin_message_id", qixinMessage.getMessageId());
+                qixinContext.put("reply_message_id", qixinMessage.getReplyMessageId());
+                data.put("qixin", qixinContext);
+
+                String json = objectMapper.writeValueAsString(Map.of(
+                    "type", "message",
+                    "data", data
+                ));
+                session.send(json);
+                log.debug("发送企信消息到 Bot: appId={}, chatId={}", appId, chatId);
+            } catch (Exception e) {
+                log.error("发送企信消息到 Bot 失败: {}", e.getMessage());
+            }
+        });
+    }
+
+    private String normalizeChatType(String chatType) {
+        if (chatType == null) {
+            return "direct";
+        }
+        String normalized = chatType.trim().toLowerCase();
+        if (normalized.isEmpty()) {
+            return "direct";
+        }
+        return ("group".equals(normalized) || "channel".equals(normalized)) ? "group" : "direct";
     }
 
     // ==================== 模拟器会话管理 ====================

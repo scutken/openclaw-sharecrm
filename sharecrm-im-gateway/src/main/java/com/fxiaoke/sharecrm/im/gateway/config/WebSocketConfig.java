@@ -24,8 +24,8 @@ public class WebSocketConfig {
                                             SimulatorWebSocketHandler simulatorHandler) {
         return new SimpleUrlHandlerMapping(
                 Map.of(
-                        "/bot**", botHandler,             // Bot 连接端点 /bot{token}
-                        "/ws/simulator", simulatorHandler // Web UI 模拟器连接端点
+                        "/im-gateway/bot", botHandler,   // Bot 连接端点 /im-gateway/bot?token={accessToken}
+                        "/ws/simulator", simulatorHandler // Web UI 模拟器连接端点（内部）
                 ),
                 -1
         );

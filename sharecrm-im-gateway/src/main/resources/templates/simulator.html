@@ -248,10 +248,11 @@
         <div class="form-group">
             <label>机器人账号</label>
             <select id="appId" onchange="onConfigChange()">
-                <option value="">-- 请选择 --</option>
+                <option value="" data-botfullid="">-- 请选择 --</option>
                 <option th:each="account : ${accounts}"
                         th:value="${account.appId}"
-                        th:text="${account.appId + ' - ' + account.botName}"
+                        th:data-botfullid="${account.botFullId}"
+                        th:text="${account.appId + ' - ' + account.botFullId}"
                         th:data-online="${#lists.contains(onlineAppIds, account.appId)}">
                 </option>
             </select>
@@ -544,30 +545,41 @@
     }
     
     function sendMessage() {
-        const appId = document.getElementById('appId').value;
+        const appIdSelect = document.getElementById('appId');
+        const appId = appIdSelect.value;
         const text = document.getElementById('messageInput').value.trim();
         
         if (!appId || !text) return;
+        
+        const option = appIdSelect.options[appIdSelect.selectedIndex];
+        const botFullId = option.dataset.botfullid;
         
         const sendBtn = document.getElementById('sendBtn');
         const messageInput = document.getElementById('messageInput');
         
         sendBtn.disabled = true;
         
+        const userId = document.getElementById('userId').value || 'u-1001';
+        const userName = document.getElementById('userName').value || '测试用户';
+        
+        // 构造 QixinMessage.InboundMessage 格式
         const data = {
-            appId: appId,
+            env: 0,
+            ea: 'simulator',
+            botFullId: botFullId,
+            sessionId: document.getElementById('channelId').value || 'ch-001',
             chatType: document.getElementById('chatType').value,
-            channelId: document.getElementById('channelId').value,
-            userId: document.getElementById('userId').value,
-            userName: document.getElementById('userName').value,
-            text: text
+            messageContent: text,
+            messageType: 'T',
+            messageTimestamp: Date.now(),
+            senderFullId: 'E.simulator.' + userId
         };
         
         // 立即显示用户消息
         addMessage({
             type: 'user',
             text: text,
-            sender: data.userName,
+            sender: userName,
             time: Date.now()
         });
         
@@ -575,14 +587,14 @@
         messageInput.value = '';
         
         // 发送到服务器
-        fetch('/api/simulator/send', {
+        fetch('/bot/message/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         })
         .then(r => r.json())
         .then(result => {
-            if (!result.success) {
+            if (result.code !== 0) {
                 addMessage({
                     type: 'system',
                     text: '发送失败: ' + result.message,
