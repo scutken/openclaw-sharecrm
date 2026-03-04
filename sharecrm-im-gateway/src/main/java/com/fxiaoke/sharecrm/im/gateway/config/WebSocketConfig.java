@@ -2,40 +2,31 @@ package com.fxiaoke.sharecrm.im.gateway.config;
 
 import com.fxiaoke.sharecrm.im.gateway.websocket.BotWebSocketHandler;
 import com.fxiaoke.sharecrm.im.gateway.websocket.SimulatorWebSocketHandler;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.web.reactive.HandlerMapping;
-import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
-import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
-
-import java.util.Map;
+import org.springframework.web.socket.config.annotation.EnableWebSocket;
+import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
+import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
 
 /**
  * WebSocket 配置
  */
 @Configuration
-public class WebSocketConfig {
+@EnableWebSocket
+public class WebSocketConfig implements WebSocketConfigurer {
 
-    /**
-     * WebSocket 路由映射
-     */
-    @Bean
-    public HandlerMapping webSocketMapping(BotWebSocketHandler botHandler,
-                                            SimulatorWebSocketHandler simulatorHandler) {
-        return new SimpleUrlHandlerMapping(
-                Map.of(
-                        "/im-gateway/bot", botHandler,   // Bot 连接端点 /im-gateway/bot?token={accessToken}
-                        "/ws/simulator", simulatorHandler // Web UI 模拟器连接端点（内部）
-                ),
-                -1
-        );
+    private final BotWebSocketHandler botHandler;
+    private final SimulatorWebSocketHandler simulatorHandler;
+
+    public WebSocketConfig(BotWebSocketHandler botHandler, SimulatorWebSocketHandler simulatorHandler) {
+        this.botHandler = botHandler;
+        this.simulatorHandler = simulatorHandler;
     }
 
-    /**
-     * WebSocket 处理器适配器
-     */
-    @Bean
-    public WebSocketHandlerAdapter handlerAdapter() {
-        return new WebSocketHandlerAdapter();
+    @Override
+    public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
+        // Bot 连接端点 /im-gateway/bot?token={accessToken}
+        registry.addHandler(botHandler, "/im-gateway/bot").setAllowedOrigins("*");
+        // Web UI 模拟器连接端点（内部）
+        registry.addHandler(simulatorHandler, "/ws/simulator").setAllowedOrigins("*");
     }
 }

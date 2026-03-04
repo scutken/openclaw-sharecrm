@@ -1,13 +1,17 @@
 package com.fxiaoke.sharecrm.im.gateway.websocket;
 
 import lombok.Data;
-import org.springframework.web.reactive.socket.WebSocketSession;
-import reactor.core.publisher.Sinks;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.WebSocketSession;
+
+import java.io.IOException;
 
 /**
  * 模拟器会话
  * 用于管理 Web UI 模拟器的 WebSocket 连接
  */
+@Slf4j
 @Data
 public class SimulatorSession {
 
@@ -32,19 +36,26 @@ public class SimulatorSession {
     private final WebSocketSession webSocketSession;
 
     /**
-     * 消息发送器
-     */
-    private final Sinks.Many<String> outbound;
-
-    /**
      * 是否已关闭
      */
     private volatile boolean closed = false;
 
-    public SimulatorSession(String sessionId, WebSocketSession webSocketSession, Sinks.Many<String> outbound) {
+    public SimulatorSession(String sessionId, WebSocketSession webSocketSession) {
         this.sessionId = sessionId;
         this.webSocketSession = webSocketSession;
-        this.outbound = outbound;
+    }
+
+    /**
+     * 发送消息
+     */
+    public void send(String message) {
+        if (!closed && webSocketSession.isOpen()) {
+            try {
+                webSocketSession.sendMessage(new TextMessage(message));
+            } catch (IOException e) {
+                log.warn("Failed to send message: sessionId={}, error={}", sessionId, e.getMessage());
+            }
+        }
     }
 
     /**

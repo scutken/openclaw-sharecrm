@@ -12,7 +12,12 @@ import {
   PAIRING_APPROVED_MESSAGE,
 } from "openclaw/plugin-sdk";
 import { listAccountIds, resolveAccount } from "./accounts.js";
-import { getActiveClient } from "./monitor.js";
+import { shareCrmOnboardingAdapter } from "./onboarding.js";
+import {
+  getActiveClient,
+  resolveDirectChatIdForUser,
+  resolveDirectChatTargetForUser,
+} from "./monitor.js";
 import type { ResolvedShareCrmAccount, ShareCrmChannelConfig } from "./types.js";
 
 const CHANNEL_ID = "sharecrm";
@@ -32,18 +37,31 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
   meta: {
     ...meta,
   },
+  onboarding: shareCrmOnboardingAdapter,
   pairing: {
     idLabel: "shareCrmUserId",
     normalizeAllowEntry: (entry) => entry.replace(/^sharecrm:/i, "").trim(),
-    notifyApproval: async ({ cfg, id }) => {
-      const account = resolveAccount(cfg);
-      const client = getActiveClient(account.accountId);
-      if (client) {
-        // For pairing approval, we need to determine the chat_id.
-        // In ShareCRM, DM chat_id may differ from user ID.
-        // Try sending to the user ID as chat_id (common pattern).
-        await client.sendMessage(id, PAIRING_APPROVED_MESSAGE);
+    notifyApproval: async ({ cfg, id, runtime }) => {
+      const log = runtime?.log ?? console.log;
+      const normalizedUserId = id.replace(/^sharecrm:/i, "").trim();
+      if (!normalizedUserId) return;
+
+      const preferredAccount = resolveAccount(cfg);
+      const target = resolveDirectChatTargetForUser(normalizedUserId, preferredAccount.accountId);
+      if (!target) {
+        log(`sharecrm: pairing approved for ${normalizedUserId}, but no direct chat_id mapping found; skip notify`);
+        return;
       }
+
+      const client = getActiveClient(target.accountId);
+      if (!client) {
+        log(
+          `sharecrm: pairing approved for ${normalizedUserId}, but account ${target.accountId} is not connected`,
+        );
+        return;
+      }
+
+      await client.sendMessage(target.chatId, PAIRING_APPROVED_MESSAGE);
     },
   },
   capabilities: {
@@ -70,7 +88,9 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
       properties: {
         enabled: { type: "boolean" },
         gatewayUrl: { type: "string" },
-        botToken: { type: "string" },
+        apiBaseUrl: { type: "string" },
+        appId: { type: "string" },
+        appSecret: { type: "string" },
         dmPolicy: {
           type: "string",
           enum: ["open", "pairing", "allowlist", "disabled"],
@@ -99,7 +119,9 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
               enabled: { type: "boolean" },
               name: { type: "string" },
               gatewayUrl: { type: "string" },
-              botToken: { type: "string" },
+              apiBaseUrl: { type: "string" },
+              appId: { type: "string" },
+              appSecret: { type: "string" },
             },
           },
         },
@@ -174,6 +196,8 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
       configured: account.configured,
       name: account.name,
       gatewayUrl: account.gatewayUrl,
+      apiBaseUrl: account.apiBaseUrl,
+      appId: account.appId,
     }),
     resolveAllowFrom: ({ cfg, accountId }) => {
       const account = resolveAccount(cfg, accountId);
@@ -190,7 +214,7 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
       const warnings: string[] = [];
       if (!account.configured) {
         warnings.push(
-          `- ShareCRM[${account.accountId}]: not configured (missing gatewayUrl or botToken).`,
+          `- ShareCRM[${account.accountId}]: not configured (missing gatewayUrl, apiBaseUrl, appId or appSecret).`,
         );
       }
       if (account.config?.dmPolicy === "open") {
@@ -240,7 +264,16 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
     normalizeTarget: (raw) => {
       const trimmed = raw.trim();
       if (!trimmed) return undefined;
-      return trimmed.replace(/^(sharecrm|user|chat):/i, "").trim() || undefined;
+      const withoutProvider = trimmed.replace(/^sharecrm:/i, "").trim();
+      if (!withoutProvider) return undefined;
+
+      const match = withoutProvider.match(/^(user|chat):(.*)$/i);
+      if (!match) return withoutProvider;
+
+      const kind = match[1]?.toLowerCase();
+      const value = match[2]?.trim();
+      if (!kind || !value) return undefined;
+      return `${kind}:${value}`;
     },
     targetResolver: {
       looksLikeId: (id) => {
@@ -265,7 +298,35 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
       if (!client) {
         throw new Error(`ShareCRM client not connected for account ${account.accountId}`);
       }
-      const chatId = to.replace(/^(user:|chat:)/i, "");
+
+      const target = to.trim();
+      if (!target) {
+        throw new Error("ShareCRM: target is empty");
+      }
+
+      let chatId = target;
+      if (/^chat:/i.test(target)) {
+        chatId = target.slice(5).trim();
+      } else if (/^user:/i.test(target)) {
+        const userId = target.slice(5).trim();
+        const mappedChatId = resolveDirectChatIdForUser(account.accountId, userId);
+        if (!mappedChatId) {
+          throw new Error(
+            `ShareCRM: no known direct chat_id for user ${userId}. Reply from an inbound DM first or use chat:<chat_id>.`,
+          );
+        }
+        chatId = mappedChatId;
+      } else {
+        const mappedChatId = resolveDirectChatIdForUser(account.accountId, target);
+        if (mappedChatId) {
+          chatId = mappedChatId;
+        }
+      }
+
+      if (!chatId) {
+        throw new Error("ShareCRM: resolved chat_id is empty");
+      }
+
       const result = await client.sendMessage(chatId, text);
       if (!result) {
         throw new Error("ShareCRM: failed to send message");
@@ -284,6 +345,8 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
       configured: account.configured,
       name: account.name,
       gatewayUrl: account.gatewayUrl,
+      apiBaseUrl: account.apiBaseUrl,
+      appId: account.appId,
       running: runtime?.running ?? false,
       lastStartAt: runtime?.lastStartAt ?? null,
       lastStopAt: runtime?.lastStopAt ?? null,

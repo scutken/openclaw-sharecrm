@@ -142,44 +142,51 @@
             </div>
         </div>
 
-        <div class="notice" style="background: #fff7e6; border: 1px solid #ffd59d; border-radius: 6px; padding: 12px 16px; margin-bottom: 20px; color: #d46b08;">
-            📝 账号通过配置文件管理，请编辑 <code>accounts.yml</code> 添加/修改/删除账号，重启服务后生效。
+        <div class="form-section" style="background: #fafafa; padding: 16px; border-radius: 6px; margin-bottom: 20px;">
+            <h3 style="margin: 0 0 12px 0; font-size: 14px; color: #333;">新增/更新账号</h3>
+            <div class="form-row">
+                <input type="text" id="inputEa" placeholder="ea (企业标识)" style="width: 150px;">
+                <input type="text" id="inputBotFullId" placeholder="botFullId" style="width: 180px;">
+                <input type="text" id="inputAppId" placeholder="appId" style="width: 200px;">
+                <input type="text" id="inputAppSecret" placeholder="appSecret" style="width: 200px;">
+                <button class="btn btn-primary" onclick="saveAccount()">保存</button>
+            </div>
         </div>
 
         <div class="table-wrapper">
         <table th:if="${!#lists.isEmpty(accounts)}">
             <thead>
             <tr>
+                <th>EA</th>
                 <th>botFullId</th>
                 <th>App ID</th>
-                <th>Token (用于连接)</th>
+                <th>App Secret</th>
                 <th>状态</th>
                 <th>连接</th>
+                <th>操作</th>
             </tr>
             </thead>
             <tbody>
             <tr th:each="account : ${accounts}">
+                <td th:text="${account.ea}"></td>
                 <td th:text="${account.botFullId}"></td>
                 <td class="mono-cell">
                     <span class="mono-text" th:text="${account.appId}" th:title="${account.appId}"></span>
                     <button class="copy-btn" th:data-text="${account.appId}" onclick="copyText(this)">复制</button>
                 </td>
-                <td class="token-cell">
-                    <span class="token-text" 
-                          th:data-appid="${account.appId}" 
-                          th:data-secret="${account.appSecret}"
-                          th:title="${'Base64(' + account.appId + ':' + account.appSecret + ')'}">
-                        生成中...
-                    </span>
-                    <button class="copy-btn" 
-                            th:data-appid="${account.appId}" 
-                            th:data-secret="${account.appSecret}" 
-                            onclick="copyToken(this)">复制</button>
+                <td class="mono-cell">
+                    <span class="mono-text" th:text="${account.appSecret}" th:title="${account.appSecret}"></span>
                 </td>
                 <td th:text="${account.enabled ? '启用' : '禁用'}"></td>
                 <td>
                     <span th:if="${#lists.contains(onlineAppIds, account.appId)}" class="status-online">● 在线</span>
                     <span th:unless="${#lists.contains(onlineAppIds, account.appId)}" class="status-offline">○ 离线</span>
+                </td>
+                <td>
+                    <button class="btn btn-danger btn-sm" 
+                            th:data-ea="${account.ea}" 
+                            th:data-botfullid="${account.botFullId}" 
+                            onclick="deleteAccount(this)">删除</button>
                 </td>
             </tr>
             </tbody>
@@ -235,6 +242,45 @@
             btn.textContent = originalText;
             btn.classList.remove('copied');
         }, 1500);
+    }
+
+    function saveAccount() {
+        const ea = document.getElementById('inputEa').value.trim();
+        const botFullId = document.getElementById('inputBotFullId').value.trim();
+        const appId = document.getElementById('inputAppId').value.trim();
+        const appSecret = document.getElementById('inputAppSecret').value.trim();
+        if (!ea || !botFullId || !appId || !appSecret) {
+            alert('请填写所有字段');
+            return;
+        }
+        fetch('/accounts/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ea, botFullId, appId, appSecret })
+        }).then(r => r.json()).then(res => {
+            if (res.code === 0) {
+                location.reload();
+            } else {
+                alert('保存失败: ' + res.msg);
+            }
+        }).catch(e => alert('请求失败: ' + e));
+    }
+
+    function deleteAccount(btn) {
+        const ea = btn.dataset.ea;
+        const botFullId = btn.dataset.botfullid;
+        if (!confirm('确认删除账号 ' + ea + ' / ' + botFullId + ' ?')) return;
+        fetch('/accounts/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ea, botFullId })
+        }).then(r => r.json()).then(res => {
+            if (res.code === 0) {
+                location.reload();
+            } else {
+                alert('删除失败: ' + res.msg);
+            }
+        }).catch(e => alert('请求失败: ' + e));
     }
 </script>
 </body>

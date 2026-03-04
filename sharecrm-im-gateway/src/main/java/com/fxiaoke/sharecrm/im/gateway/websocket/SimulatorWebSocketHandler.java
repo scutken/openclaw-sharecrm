@@ -5,11 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.web.reactive.socket.WebSocketHandler;
-import org.springframework.web.reactive.socket.WebSocketMessage;
-import org.springframework.web.reactive.socket.WebSocketSession;
-import reactor.core.publisher.Mono;
-import reactor.core.publisher.Sinks;
+import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 /**
  * 模拟器 WebSocket 处理器
@@ -22,12 +21,12 @@ import reactor.core.publisher.Sinks;
  * 当接入真实纷享IM时，此处理器可扩展为：
  * 1. 通过纷享IM SDK接收真实消息
  * 2. 将真实IM消息转换为统一格式推送给前端
- * 3. 支持多种消息类型（文本l1、图片、文件等）
+ * 3. 支持多种消息类型（文本、图片、文件等）
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class SimulatorWebSocketHandler implements WebSocketHandler {
+public class SimulatorWebSocketHandler extends TextWebSocketHandler {
 
     private final ObjectMapper objectMapper;
     private final SessionManager sessionManager;
@@ -45,62 +44,55 @@ public class SimulatorWebSocketHandler implements WebSocketHandler {
     }
 
     @Override
-    public Mono<Void> handle(WebSocketSession session) {
+    public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         String sessionId = session.getId();
-        log.info("模拟器 WebSocket 连接建立: {}", sessionId);
-
-        // 创建消息发送器
-        Sinks.Many<String> outbound = Sinks.many().unicast().onBackpressureBuffer();
+        log.info("Simulator WebSocket connected: {}", sessionId);
 
         // 创建模拟器会话
-        SimulatorSession simulatorSession = new SimulatorSession(sessionId, session, outbound);
+        SimulatorSession simulatorSession = new SimulatorSession(sessionId, session);
         sessionManager.addSimulatorSession(simulatorSession);
 
+        // 保存到 session attributes
+        session.getAttributes().put("simulatorSession", simulatorSession);
+
         // 发送欢迎消息
-        sendSystemInfo(simulatorSession, "已连接到消息模拟器");
-
-        // 处理入站消息
-        Mono<Void> input = session.receive()
-                .map(WebSocketMessage::getPayloadAsText)
-                .flatMap(message -> handleMessage(simulatorSession, message))
-                .then();
-
-        // 发送出站消息
-        Mono<Void> output = session.send(
-                outbound.asFlux().map(session::textMessage)
-        );
-
-        // 合并处理
-        return Mono.zip(input, output)
-                .doFinally(signal -> {
-                    log.info("模拟器 WebSocket 连接关闭: {}, 原因: {}", sessionId, signal);
-                    simulatorSession.setClosed(true);
-                    sessionManager.removeSimulatorSession(sessionId);
-                })
-                .then();
+        sendSystemInfo(simulatorSession, "Connected to message simulator");
     }
 
-    /**
-     * 处理模拟器消息
-     */
-    private Mono<Void> handleMessage(SimulatorSession session, String message) {
-        return Mono.fromRunnable(() -> {
-            try {
-                JsonNode node = objectMapper.readTree(message);
-                String type = node.has("type") ? node.get("type").asText() : "";
+    @Override
+    protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
+        SimulatorSession simulatorSession = (SimulatorSession) session.getAttributes().get("simulatorSession");
+        if (simulatorSession == null) {
+            return;
+        }
 
-                log.debug("收到模拟器消息: type={}, sessionId={}", type, session.getSessionId());
+        try {
+            JsonNode node = objectMapper.readTree(message.getPayload());
+            String type = node.has("type") ? node.get("type").asText() : "";
 
-                switch (type) {
-                    case SimulatorMessageType.SUBSCRIBE -> handleSubscribe(session, node);
-                    case SimulatorMessageType.UNSUBSCRIBE -> handleUnsubscribe(session);
-                    default -> log.warn("未知模拟器消息类型: {}", type);
-                }
-            } catch (Exception e) {
-                log.error("处理模拟器消息异常: {}", e.getMessage(), e);
-                sendError(session, "消息处理失败: " + e.getMessage());
+            log.debug("Received simulator message: type={}, sessionId={}", type, simulatorSession.getSessionId());
+
+            switch (type) {
+                case SimulatorMessageType.SUBSCRIBE -> handleSubscribe(simulatorSession, node);
+                case SimulatorMessageType.UNSUBSCRIBE -> handleUnsubscribe(simulatorSession);
+                default -> log.warn("Unknown simulator message type: {}", type);
             }
-        });
+        } catch (Exception e) {
+            log.error("Failed to process simulator message: {}", e.getMessage(), e);
+            sendError(simulatorSession, "Message processing failed: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
+        String sessionId = session.getId();
+        log.info("Simulator WebSocket closed: {}, reason: {}", sessionId, status);
+
+        SimulatorSession simulatorSession = (SimulatorSession) session.getAttributes().get("simulatorSession");
+        if (simulatorSession != null) {
+            simulatorSession.setClosed(true);
+        }
+        sessionManager.removeSimulatorSession(sessionId);
     }
 
     /**
@@ -111,15 +103,15 @@ public class SimulatorWebSocketHandler implements WebSocketHandler {
         String channelId = node.has("channelId") ? node.get("channelId").asText() : null;
 
         if (appId == null || appId.isEmpty()) {
-            sendError(session, "appId 不能为空");
+            sendError(session, "appId cannot be empty");
             return;
         }
 
         session.subscribe(appId, channelId);
-        log.info("模拟器订阅: sessionId={}, appId={}, channelId={}", 
+        log.info("Simulator subscribed: sessionId={}, appId={}, channelId={}",
                 session.getSessionId(), appId, channelId);
         
-        sendSystemInfo(session, String.format("已订阅 appId=%s, channelId=%s", appId, channelId));
+        sendSystemInfo(session, String.format("Subscribed appId=%s, channelId=%s", appId, channelId));
     }
 
     /**
@@ -128,8 +120,8 @@ public class SimulatorWebSocketHandler implements WebSocketHandler {
     private void handleUnsubscribe(SimulatorSession session) {
         session.setSubscribedAppId(null);
         session.setSubscribedChannelId(null);
-        log.info("模拟器取消订阅: sessionId={}", session.getSessionId());
-        sendSystemInfo(session, "已取消订阅");
+        log.info("Simulator unsubscribed: sessionId={}", session.getSessionId());
+        sendSystemInfo(session, "Unsubscribed");
     }
 
     /**
@@ -143,9 +135,9 @@ public class SimulatorWebSocketHandler implements WebSocketHandler {
                     info,
                     System.currentTimeMillis()
             ));
-            session.getOutbound().tryEmitNext(json);
+            session.send(json);
         } catch (Exception e) {
-            log.error("发送系统信息失败", e);
+            log.error("Failed to send system info", e);
         }
     }
 
@@ -160,9 +152,9 @@ public class SimulatorWebSocketHandler implements WebSocketHandler {
                     error,
                     System.currentTimeMillis()
             ));
-            session.getOutbound().tryEmitNext(json);
+            session.send(json);
         } catch (Exception e) {
-            log.error("发送错误信息失败", e);
+            log.error("Failed to send error message", e);
         }
     }
 

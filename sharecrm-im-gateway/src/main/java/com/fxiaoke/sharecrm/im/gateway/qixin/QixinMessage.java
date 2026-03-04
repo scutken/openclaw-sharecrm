@@ -126,25 +126,4 @@ public class QixinMessage {
         private String content;
         private long messageTimestamp;
     }
-
-    /**
-     * 企信接口响应
-     */
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class Response {
-        private int code;
-        private String message;
-
-        public static Response success() {
-            return Response.builder().code(0).message("success").build();
-        }
-
-
-        public static Response error(int code, String message) {
-            return Response.builder().code(code).message(message).build();
-        }
-    }
 }

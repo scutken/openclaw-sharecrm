@@ -7,11 +7,10 @@ import com.fxiaoke.sharecrm.im.gateway.service.AuthService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.web.reactive.socket.WebSocketHandler;
-import org.springframework.web.reactive.socket.WebSocketMessage;
-import org.springframework.web.reactive.socket.WebSocketSession;
-import reactor.core.publisher.Mono;
-import reactor.core.publisher.Sinks;
+import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.util.Map;
 
@@ -26,36 +25,37 @@ import java.util.Map;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class BotWebSocketHandler implements WebSocketHandler {
+public class BotWebSocketHandler extends TextWebSocketHandler {
 
     private final ObjectMapper objectMapper;
     private final AuthService authService;
     private final SessionManager sessionManager;
 
     @Override
-    public Mono<Void> handle(WebSocketSession session) {
+    public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         // 从 URL query param 提取 token: /im-gateway/bot?token={accessToken}
-        String query = session.getHandshakeInfo().getUri().getQuery();
+        String query = session.getUri() != null ? session.getUri().getQuery() : null;
         String token = extractToken(query);
 
         if (token == null || token.isEmpty()) {
-            log.warn("连接失败: token 为空");
-            return sendError(session, null, "AUTH_FAILED", "缺少 token 参数")
-                    .then(session.close());
+            log.warn("Connection failed: empty token");
+            sendError(session, "AUTH_FAILED", "Missing token parameter");
+            session.close(CloseStatus.NOT_ACCEPTABLE);
+            return;
         }
 
-        return authService.validateAccessToken(token)
-            .flatMap(account -> handleAuthenticatedSession(session, account))
-            .onErrorResume(AuthException.class, e -> {
-                log.error("连接失败: {} - {}", e.getCode(), e.getMessage());
-                return sendError(session, null, e.getCode(), e.getMessage())
-                    .then(session.close());
-            })
-            .onErrorResume(e -> {
-                log.error("连接失败: {}", e.getMessage());
-                return sendError(session, null, "AUTH_FAILED", e.getMessage())
-                    .then(session.close());
-            });
+        try {
+            Account account = authService.validateAccessToken(token);
+            handleAuthenticatedSession(session, account);
+        } catch (AuthException e) {
+            log.error("Connection failed: {} - {}", e.getCode(), e.getMessage());
+            sendError(session, e.getCode(), e.getMessage());
+            session.close(CloseStatus.NOT_ACCEPTABLE);
+        } catch (Exception e) {
+            log.error("Connection failed: {}", e.getMessage());
+            sendError(session, "AUTH_FAILED", e.getMessage());
+            session.close(CloseStatus.NOT_ACCEPTABLE);
+        }
     }
 
     /**
@@ -74,31 +74,17 @@ public class BotWebSocketHandler implements WebSocketHandler {
         return null;
     }
 
-    private Mono<Void> handleAuthenticatedSession(WebSocketSession session, Account account) {
-        log.info("Bot 连接成功: appId={}", account.getAppId());
+    private void handleAuthenticatedSession(WebSocketSession session, Account account) {
+        log.info("Bot connected: appId={}", account.getAppId());
 
-        Sinks.Many<String> outbound = Sinks.many().unicast().onBackpressureBuffer();
-        BotSession botSession = new BotSession(session.getId(), account.getAppId(), session, outbound);
+        BotSession botSession = new BotSession(session.getId(), account.getAppId(), session);
         sessionManager.registerBot(account.getAppId(), botSession);
+
+        // 保存 appId 到 session attributes 用于后续处理
+        session.getAttributes().put("appId", account.getAppId());
 
         // 发送连接成功消息
         sendConnectedMessage(botSession, account);
-
-        // 处理入站消息
-        Mono<Void> input = session.receive()
-            .map(WebSocketMessage::getPayloadAsText)
-            .flatMap(msg -> handleMessage(botSession, msg))
-            .then();
-
-        // 发送出站消息
-        Mono<Void> output = session.send(outbound.asFlux().map(session::textMessage));
-
-        return Mono.zip(input, output)
-            .doFinally(signal -> {
-                log.info("Bot 断开连接: appId={}, signal={}", account.getAppId(), signal);
-                sessionManager.unregisterBot(account.getAppId());
-            })
-            .then();
     }
 
     private void sendConnectedMessage(BotSession session, Account account) {
@@ -110,37 +96,30 @@ public class BotWebSocketHandler implements WebSocketHandler {
                 )
             ));
             session.send(json);
-            log.debug("发送 connected 消息: appId={}", account.getAppId());
+            log.debug("Sent connected message: appId={}", account.getAppId());
         } catch (Exception e) {
-            log.error("发送连接消息失败", e);
+            log.error("Failed to send connected message", e);
         }
     }
 
-    private Mono<Void> handleMessage(BotSession session, String message) {
+    @Override
+    protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
         // 新协议下 Bot 不向 Gateway 发送消息，改由 REST API 发送
         // 这里仅记录日志
-        log.debug("收到 WebSocket 消息: appId={}, message={}", session.getAppId(), message);
-        return Mono.empty();
+        String appId = (String) session.getAttributes().get("appId");
+        log.debug("Received WebSocket message: appId={}, message={}", appId, message.getPayload());
     }
 
-    private Mono<Void> sendError(WebSocketSession session, String requestId, String code, String message) {
-        try {
-            Map<String, Object> errorMap = Map.of(
-                "type", "error",
-                "error", Map.of(
-                    "code", code,
-                    "message", message
-                )
-            );
-            String json = objectMapper.writeValueAsString(errorMap);
-            return session.send(Mono.just(session.textMessage(json)));
-        } catch (Exception e) {
-            log.error("发送错误消息失败", e);
-            return Mono.empty();
+    @Override
+    public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
+        String appId = (String) session.getAttributes().get("appId");
+        if (appId != null) {
+            log.info("Bot disconnected: appId={}, status={}", appId, status);
+            sessionManager.unregisterBot(appId);
         }
     }
 
-    private void sendError(BotSession session, String requestId, String code, String message) {
+    private void sendError(WebSocketSession session, String code, String message) {
         try {
             Map<String, Object> errorMap = Map.of(
                 "type", "error",
@@ -150,9 +129,9 @@ public class BotWebSocketHandler implements WebSocketHandler {
                 )
             );
             String json = objectMapper.writeValueAsString(errorMap);
-            session.send(json);
+            session.sendMessage(new TextMessage(json));
         } catch (Exception e) {
-            log.error("发送错误消息失败", e);
+            log.error("Failed to send error message", e);
         }
     }
 }

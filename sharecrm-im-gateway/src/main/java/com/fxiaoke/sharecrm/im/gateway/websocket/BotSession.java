@@ -2,8 +2,10 @@ package com.fxiaoke.sharecrm.im.gateway.websocket;
 
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.web.reactive.socket.WebSocketSession;
-import reactor.core.publisher.Sinks;
+import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.WebSocketSession;
+
+import java.io.IOException;
 
 /**
  * Bot WebSocket 会话
@@ -17,24 +19,23 @@ public class BotSession {
     private final String sessionId;
     private final String appId;
     private final WebSocketSession webSocketSession;
-    private final Sinks.Many<String> outbound;
     private volatile boolean closed = false;
 
-    public BotSession(String sessionId, String appId, WebSocketSession webSocketSession, Sinks.Many<String> outbound) {
+    public BotSession(String sessionId, String appId, WebSocketSession webSocketSession) {
         this.sessionId = sessionId;
         this.appId = appId;
         this.webSocketSession = webSocketSession;
-        this.outbound = outbound;
     }
 
     /**
      * 发送消息
      */
     public void send(String message) {
-        if (!closed) {
-            Sinks.EmitResult result = outbound.tryEmitNext(message);
-            if (result.isFailure()) {
-                log.warn("发送消息失败: sessionId={}, result={}", sessionId, result);
+        if (!closed && webSocketSession.isOpen()) {
+            try {
+                webSocketSession.sendMessage(new TextMessage(message));
+            } catch (IOException e) {
+                log.warn("Failed to send message: sessionId={}, error={}", sessionId, e.getMessage());
             }
         }
     }
@@ -44,6 +45,12 @@ public class BotSession {
      */
     public void close() {
         this.closed = true;
-        outbound.tryEmitComplete();
+        try {
+            if (webSocketSession.isOpen()) {
+                webSocketSession.close();
+            }
+        } catch (IOException e) {
+            log.warn("Failed to close session: sessionId={}, error={}", sessionId, e.getMessage());
+        }
     }
 }

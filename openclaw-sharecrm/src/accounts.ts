@@ -22,10 +22,11 @@ export function listAccountIds(cfg: any): string[] {
 
   const ids = new Set<string>();
 
-  // 如果基础配置有 botToken，则存在 "default" 账号
-  const hasBaseToken =
-    channelCfg.botToken || process.env.SHARECRM_BOT_TOKEN;
-  if (hasBaseToken) {
+  // 如果基础配置有 appId + appSecret，则存在 "default" 账号
+  const hasBaseCredentials =
+    (channelCfg.appId && channelCfg.appSecret) ||
+    (process.env.SHARECRM_APP_ID && process.env.SHARECRM_APP_SECRET);
+  if (hasBaseCredentials) {
     ids.add(DEFAULT_ACCOUNT_ID);
   }
 
@@ -51,12 +52,16 @@ export function resolveAccount(cfg: any, accountId?: string | null): ResolvedSha
 
   // 环境变量回退
   const envGatewayUrl = process.env.SHARECRM_GATEWAY_URL ?? "";
-  const envBotToken = process.env.SHARECRM_BOT_TOKEN ?? "";
+  const envApiBaseUrl = process.env.SHARECRM_API_BASE_URL ?? "";
+  const envAppId = process.env.SHARECRM_APP_ID ?? "";
+  const envAppSecret = process.env.SHARECRM_APP_SECRET ?? "";
 
   const gatewayUrl = accountOverride.gatewayUrl ?? channelCfg.gatewayUrl ?? envGatewayUrl;
-  const botToken = accountOverride.botToken ?? channelCfg.botToken ?? envBotToken;
+  const apiBaseUrl = accountOverride.apiBaseUrl ?? channelCfg.apiBaseUrl ?? envApiBaseUrl;
+  const appId = accountOverride.appId ?? channelCfg.appId ?? envAppId;
+  const appSecret = accountOverride.appSecret ?? channelCfg.appSecret ?? envAppSecret;
 
-  const configured = Boolean(gatewayUrl && botToken);
+  const configured = Boolean(gatewayUrl && apiBaseUrl && appId && appSecret);
 
   return {
     accountId: id,
@@ -64,7 +69,9 @@ export function resolveAccount(cfg: any, accountId?: string | null): ResolvedSha
     configured,
     name: accountOverride.name,
     gatewayUrl,
-    botToken,
+    apiBaseUrl,
+    appId,
+    appSecret,
     config: channelCfg,
   };
 }

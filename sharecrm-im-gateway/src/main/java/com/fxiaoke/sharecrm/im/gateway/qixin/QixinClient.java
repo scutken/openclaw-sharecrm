@@ -6,7 +6,6 @@ import com.facishare.qixin.api.open.OpenMessageService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-import reactor.core.publisher.Mono;
 
 /**
  * 企信 REST API 客户端
@@ -32,14 +31,14 @@ public class QixinClient {
      * @param arg 发送消息参数
      * @return 发送结果
      */
-    public Mono<SendMessageResult> sendMessage(SendOpenAgentMessageArg arg) {
-        log.info("[企信发送{}] arg={}", enabled ? "" : "-模拟", arg);
+    public SendMessageResult sendMessage(SendOpenAgentMessageArg arg) {
+        log.info("[Qixin send{}] arg={}", enabled ? "" : "-mock", arg);
         
         if (enabled) {
-            return Mono.fromCallable(() -> openMessageService.sendOpenAgentMessage(arg));
+            return openMessageService.sendOpenAgentMessage(arg);
         }
         
         // 模拟模式
-        return Mono.just(new SendMessageResult());
+        return new SendMessageResult();
     }
 }

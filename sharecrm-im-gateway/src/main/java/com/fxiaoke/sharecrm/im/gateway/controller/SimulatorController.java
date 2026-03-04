@@ -5,7 +5,6 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
-import reactor.core.publisher.Mono;
 
 import java.util.List;
 
@@ -26,13 +25,11 @@ public class SimulatorController {
      * 获取在线会话
      */
     @GetMapping("/sessions")
-    public Mono<SessionsResponse> getSessions() {
-        return Mono.fromCallable(() -> {
-            SessionsResponse response = new SessionsResponse();
-            response.setOnlineCount(sessionManager.getBotOnlineCount());
-            response.setAppIds(sessionManager.getBotAppIds());
-            return response;
-        });
+    public SessionsResponse getSessions() {
+        SessionsResponse response = new SessionsResponse();
+        response.setOnlineCount(sessionManager.getBotOnlineCount());
+        response.setAppIds(sessionManager.getBotAppIds());
+        return response;
     }
 
     /**

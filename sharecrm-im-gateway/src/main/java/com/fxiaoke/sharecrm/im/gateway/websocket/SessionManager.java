@@ -41,10 +41,10 @@ public class SessionManager {
     public void registerBot(String appId, BotSession session) {
         BotSession existing = botSessions.put(appId, session);
         if (existing != null) {
-            log.warn("替换已存在的 Bot 会话: appId={}", appId);
+            log.warn("Replacing existing Bot session: appId={}", appId);
             existing.close();
         }
-        log.info("注册 Bot 会话: appId={}, sessionId={}", appId, session.getSessionId());
+        log.info("Bot session registered: appId={}, sessionId={}", appId, session.getSessionId());
     }
 
     /**
@@ -53,7 +53,7 @@ public class SessionManager {
     public void unregisterBot(String appId) {
         BotSession removed = botSessions.remove(appId);
         if (removed != null) {
-            log.info("注销 Bot 会话: appId={}", appId);
+            log.info("Bot session unregistered: appId={}", appId);
         }
     }
 
@@ -101,9 +101,9 @@ public class SessionManager {
                     "data", data
                 ));
                 session.send(json);
-                log.debug("发送消息到 Bot: appId={}, chatId={}", appId, chatId);
+                log.debug("Message sent to Bot: appId={}, chatId={}", appId, chatId);
             } catch (Exception e) {
-                log.error("发送消息到 Bot 失败: {}", e.getMessage());
+                log.error("Failed to send message to Bot: {}", e.getMessage());
             }
         });
     }
@@ -147,9 +147,9 @@ public class SessionManager {
                     "data", data
                 ));
                 session.send(json);
-                log.debug("发送企信消息到 Bot: appId={}, chatId={}", appId, chatId);
+                log.debug("Qixin message sent to Bot: appId={}, chatId={}", appId, chatId);
             } catch (Exception e) {
-                log.error("发送企信消息到 Bot 失败: {}", e.getMessage());
+                log.error("Failed to send Qixin message to Bot: {}", e.getMessage());
             }
         });
     }
@@ -172,7 +172,7 @@ public class SessionManager {
      */
     public void addSimulatorSession(SimulatorSession session) {
         simulatorSessions.put(session.getSessionId(), session);
-        log.info("添加模拟器会话: {}", session.getSessionId());
+        log.info("Simulator session added: {}", session.getSessionId());
     }
 
     /**
@@ -180,7 +180,7 @@ public class SessionManager {
      */
     public void removeSimulatorSession(String sessionId) {
         simulatorSessions.remove(sessionId);
-        log.info("移除模拟器会话: {}", sessionId);
+        log.info("Simulator session removed: {}", sessionId);
     }
 
     /**
@@ -196,7 +196,7 @@ public class SessionManager {
      * 广播 Bot 回复消息到模拟器
      */
     public void broadcastBotMessageToSimulators(String appId, String chatId, String messageId, String text) {
-        log.info("[Bot 回复] appId={}, chatId={}, text={}", appId, chatId, text);
+        log.info("[Bot reply] appId={}, chatId={}, text={}", appId, chatId, text);
 
         SimulatorWebSocketHandler.MessageData messageData = new SimulatorWebSocketHandler.MessageData(
                 messageId,
@@ -221,7 +221,7 @@ public class SessionManager {
      */
     public void broadcastUserMessageToSimulators(String appId, String channelId, String messageId,
                                                   String text, String userId, String userName) {
-        log.debug("[User 消息] appId={}, channelId={}, text={}", appId, channelId, text);
+        log.debug("[User message] appId={}, channelId={}, text={}", appId, channelId, text);
 
         SimulatorWebSocketHandler.MessageData messageData = new SimulatorWebSocketHandler.MessageData(
                 messageId,
@@ -247,10 +247,10 @@ public class SessionManager {
             if (!session.isClosed() && session.matchesSubscription(appId, channelId)) {
                 try {
                     String json = objectMapper.writeValueAsString(message);
-                    session.getOutbound().tryEmitNext(json);
-                    log.debug("推送消息到模拟器: sessionId={}", session.getSessionId());
+                    session.send(json);
+                    log.debug("Message pushed to simulator: sessionId={}", session.getSessionId());
                 } catch (Exception e) {
-                    log.error("推送消息到模拟器失败: {}", e.getMessage());
+                    log.error("Failed to push message to simulator: {}", e.getMessage());
                 }
             }
         });

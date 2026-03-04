@@ -9,7 +9,6 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import reactor.core.publisher.Mono;
 
 import java.util.Date;
 
@@ -61,69 +60,69 @@ public class AuthService {
      * 验证 AccessToken（JWT 格式）
      *
      * @param token JWT AccessToken
-     * @return 验证成功返回 Account，失败返回错误
+     * @return 验证成功返回 Account，失败抛出 AuthException
      */
-    public Mono<Account> validateAccessToken(String token) {
+    public Account validateAccessToken(String token) {
         try {
             if (token == null || token.isEmpty()) {
-                return Mono.error(new AuthException("TOKEN_INVALID", "Token 不能为空"));
+                throw new AuthException("TOKEN_INVALID", "Token cannot be empty");
             }
 
             JWT jwt = JWTUtil.parseToken(token);
             if (!jwt.setKey(JWT_SECRET_KEY).verify()) {
-                return Mono.error(new AuthException("TOKEN_INVALID", "Token 签名无效"));
+                throw new AuthException("TOKEN_INVALID", "Invalid token signature");
             }
 
             try {
                 JWTValidator.of(jwt).validateDate();
             } catch (Exception e) {
-                return Mono.error(new AuthException("TOKEN_EXPIRED", "Token 已过期"));
+                throw new AuthException("TOKEN_EXPIRED", "Token expired");
             }
 
             String appId = (String) jwt.getPayload("sub");
             if (appId == null) {
-                return Mono.error(new AuthException("TOKEN_INVALID", "Token 无效"));
+                throw new AuthException("TOKEN_INVALID", "Invalid token");
             }
 
             // 查询账号信息并验证状态
-            return accountService.findByAppId(appId)
-                    .switchIfEmpty(Mono.error(new AuthException("AUTH_FAILED", "账号不存在")))
-                    .flatMap(account -> {
-                        if (!Boolean.TRUE.equals(account.getEnabled())) {
-                            log.warn("账号已禁用: appId={}", appId);
-                            return Mono.error(new AuthException("ACCOUNT_DISABLED", "账号已禁用"));
-                        }
-                        log.debug("Token 验证成功: appId={}", appId);
-                        return Mono.just(account);
-                    });
+            Account account = accountService.findByAppId(appId)
+                    .orElseThrow(() -> new AuthException("AUTH_FAILED", "Account not found"));
+
+            if (!Boolean.TRUE.equals(account.getEnabled())) {
+                log.warn("Account disabled: appId={}", appId);
+                throw new AuthException("ACCOUNT_DISABLED", "Account disabled");
+            }
+
+            log.debug("Token validated: appId={}", appId);
+            return account;
+        } catch (AuthException e) {
+            throw e;
         } catch (Exception e) {
-            log.warn("Token 解析失败: {}", e.getMessage());
-            return Mono.error(new AuthException("TOKEN_INVALID", "Token 无效或已过期"));
+            log.warn("Token parse failed: {}", e.getMessage());
+            throw new AuthException("TOKEN_INVALID", "Invalid or expired token");
         }
     }
 
     /**
-     * 验证凭据（响应式版本）
+     * 验证凭据
      */
-    public Mono<AuthResult> authenticate(String appId, String appSecret) {
+    public AuthResult authenticate(String appId, String appSecret) {
         if (appId == null || appSecret == null) {
-            return Mono.just(AuthResult.failure("appId 和 appSecret 不能为空"));
+            return AuthResult.failure("appId and appSecret cannot be empty");
         }
 
         return accountService.findByCredentials(appId, appSecret)
                 .map(account -> {
                     if (!Boolean.TRUE.equals(account.getEnabled())) {
-                        log.warn("账号已禁用: appId={}", appId);
-                        return AuthResult.failure("账号已禁用");
+                        log.warn("Account disabled: appId={}", appId);
+                        return AuthResult.failure("Account disabled");
                     }
-                    log.info("鉴权成功: appId={}", appId);
+                    log.info("Authentication successful: appId={}", appId);
                     return AuthResult.success(account);
                 })
-                .defaultIfEmpty(AuthResult.failure("appId 或 appSecret 错误"))
-                .doOnNext(result -> {
-                    if (!result.isSuccess()) {
-                        log.warn("鉴权失败: appId={}, reason={}", appId, result.getMessage());
-                    }
+                .orElseGet(() -> {
+                    log.warn("Authentication failed: appId={}, reason=Invalid appId or appSecret", appId);
+                    return AuthResult.failure("Invalid appId or appSecret");
                 });
     }
 

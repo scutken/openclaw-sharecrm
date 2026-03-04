@@ -15,6 +15,11 @@ import lombok.NoArgsConstructor;
 public class Account {
 
     /**
+     * 会话所属企业ea
+     */
+    private String ea;
+
+    /**
      * 应用ID
      */
     private String appId;

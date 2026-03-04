@@ -1,12 +1,13 @@
 package com.fxiaoke.sharecrm.im.gateway.config;
 
-import cn.hutool.core.bean.BeanUtil;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fxiaoke.sharecrm.im.gateway.entity.Account;
 import com.github.autoconf.ConfigFactory;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
+import org.jetbrains.annotations.NotNull;
 import org.springframework.stereotype.Component;
-import org.yaml.snakeyaml.Yaml;
 
 import javax.annotation.PostConstruct;
 import java.util.ArrayList;
@@ -28,17 +29,31 @@ public class AccountProperties {
 
     @PostConstruct
     public void init() {
-        ConfigFactory.getInstance().getConfig("im-gateway-accounts", config -> {
+        ConfigFactory.getInstance().getConfig("erpdss-openclaw-accounts", config -> {
+            log.info("accounts reloaded begin, {}", accounts);
             String s = new String(config.getContent());
-            Yaml yaml = new Yaml();
-            Map<String, List<Map<String, Object>>> root = yaml.load(s);
-            List<Map<String, Object>> accountMaps = root.get("accounts");
-            List<Account> newAccounts = new ArrayList<>();
-            for (Map<String, Object> map : accountMaps) {
-                newAccounts.add(BeanUtil.toBean(map, Account.class));
-            }
+            List<Account> newAccounts = buildAccounts(s);
             accounts = newAccounts;
             log.info("accounts reloaded, {}", accounts);
         });
+    }
+
+    @NotNull
+    public static List<Account> buildAccounts(String json) {
+        List<Account> newAccounts = new ArrayList<>();
+        if (json == null || json.trim().isEmpty()) {
+            return newAccounts;
+        }
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            Map<String, List<Account>> root = mapper.readValue(json, new TypeReference<Map<String, List<Account>>>() {});
+            List<Account> accountList = root.get("accounts");
+            if (accountList != null) {
+                newAccounts.addAll(accountList);
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to parse accounts config", e);
+        }
+        return newAccounts;
     }
 }
