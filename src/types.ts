@@ -2,14 +2,32 @@
  * ShareCRM IM 渠道插件类型定义
  */
 
-// ============ Gateway 服务端消息 (server → plugin) ============
+// ============ 鉴权相关 ============
+
+/** 获取 Token 请求 */
+export interface AuthTokenRequest {
+  appId: string;
+  appSecret: string;
+}
+
+/** 获取 Token 响应 */
+export interface AuthTokenResponse {
+  code: number;
+  data?: {
+    accessToken: string;
+    expiresIn: number;
+    tokenType: "Bearer";
+  };
+  message?: string;
+}
+
+// ============ Gateway 服务端消息 (下行, server → plugin) ============
 
 /** 连接成功确认消息 */
 export interface ShareCrmConnectedMessage {
   type: "connected";
   data: {
     bot_id: string;
-    bot_name: string;
   };
 }
 
@@ -29,46 +47,44 @@ export interface ShareCrmMessageEvent {
   };
 }
 
-/** 发送结果响应 */
-export interface ShareCrmSendResult {
-  type: "send_result";
-  id: string;
-  ok: boolean;
-  data?: {
-    message_id: string;
-  };
-}
-
 /** 错误响应 */
 export interface ShareCrmErrorMessage {
   type: "error";
-  id?: string;
   error: {
     code: string;
     message: string;
   };
 }
 
-/** 服务端消息联合类型 */
+/** 服务端下行消息联合类型 */
 export type ShareCrmServerMessage =
   | ShareCrmConnectedMessage
   | ShareCrmMessageEvent
-  | ShareCrmSendResult
   | ShareCrmErrorMessage;
 
-// ============ 插件 → Gateway 消息 ============
+// ============ REST API 类型 (上行, plugin → server) ============
 
 /** 发送消息请求 */
-export interface ShareCrmSendRequest {
-  type: "send";
-  id: string;
-  data: {
-    chat_id: string;
-    text: string;
-  };
+export interface SendMessageRequest {
+  chat_id: string;
+  text: string;
 }
 
-export type ShareCrmClientMessage = ShareCrmSendRequest;
+/** 发送消息响应 */
+export interface SendMessageResponse {
+  code: number;
+  data?: {
+    message_id: string;
+  };
+  message?: string;
+}
+
+/** API 通用响应 */
+export interface ApiResponse<T = unknown> {
+  code: number;
+  data?: T;
+  message?: string;
+}
 
 // ============ 渠道配置 ============
 
@@ -76,7 +92,9 @@ export type ShareCrmClientMessage = ShareCrmSendRequest;
 export interface ShareCrmChannelConfig {
   enabled?: boolean;
   gatewayUrl?: string;
-  botToken?: string;
+  apiBaseUrl?: string;
+  appId?: string;
+  appSecret?: string;
   dmPolicy?: "open" | "pairing" | "allowlist" | "disabled";
   allowFrom?: (string | number)[];
   groupPolicy?: "open" | "allowlist" | "disabled";
@@ -93,7 +111,9 @@ export interface ShareCrmAccountConfigRaw {
   enabled?: boolean;
   name?: string;
   gatewayUrl?: string;
-  botToken?: string;
+  apiBaseUrl?: string;
+  appId?: string;
+  appSecret?: string;
   dmPolicy?: "open" | "pairing" | "allowlist" | "disabled";
   allowFrom?: (string | number)[];
 }
@@ -105,7 +125,9 @@ export interface ResolvedShareCrmAccount {
   configured: boolean;
   name?: string;
   gatewayUrl: string;
-  botToken: string;
+  apiBaseUrl: string;
+  appId: string;
+  appSecret: string;
   config: ShareCrmChannelConfig;
 }
 

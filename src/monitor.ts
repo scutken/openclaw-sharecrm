@@ -31,7 +31,65 @@ const CHANNEL_ID = "sharecrm";
 // 各账号的活跃客户端
 const activeClients = new Map<string, ShareCrmClient>();
 // 各账号的 Bot 信息
-const botInfo = new Map<string, { botId: string; botName: string }>();
+const botInfo = new Map<string, { botId: string }>();
+// Direct 消息会话映射: accountId -> (userId -> chatId)
+const directChatByUserByAccount = new Map<string, Map<string, string>>();
+
+function rememberDirectChatId(accountId: string, userId: string, chatId: string): void {
+  if (!accountId || !userId || !chatId) return;
+  const normalizedUserId = userId.trim();
+  const normalizedChatId = chatId.trim();
+  if (!normalizedUserId || !normalizedChatId) return;
+
+  const accountMap =
+    directChatByUserByAccount.get(accountId) ??
+    (() => {
+      const next = new Map<string, string>();
+      directChatByUserByAccount.set(accountId, next);
+      return next;
+    })();
+
+  accountMap.set(normalizedUserId, normalizedChatId);
+}
+
+export function resolveDirectChatIdForUser(accountId: string, userId: string): string | undefined {
+  const normalizedUserId = userId?.trim();
+  if (!accountId || !normalizedUserId) return undefined;
+  return directChatByUserByAccount.get(accountId)?.get(normalizedUserId);
+}
+
+export function resolveDirectChatTargetForUser(
+  userId: string,
+  preferredAccountId?: string,
+): { accountId: string; chatId: string } | null {
+  const normalizedUserId = userId?.trim();
+  if (!normalizedUserId) return null;
+
+  if (preferredAccountId) {
+    const preferredChatId = resolveDirectChatIdForUser(preferredAccountId, normalizedUserId);
+    if (preferredChatId) {
+      return { accountId: preferredAccountId, chatId: preferredChatId };
+    }
+  }
+
+  let matched: { accountId: string; chatId: string } | null = null;
+  for (const [accountId, accountMap] of directChatByUserByAccount.entries()) {
+    const chatId = accountMap.get(normalizedUserId);
+    if (!chatId) continue;
+
+    if (!matched) {
+      matched = { accountId, chatId };
+      continue;
+    }
+
+    // 同一个 userId 命中多个账号，避免误发。
+    if (matched.accountId !== accountId || matched.chatId !== chatId) {
+      return null;
+    }
+  }
+
+  return matched;
+}
 
 export type MonitorShareCrmOpts = {
   config?: OpenClawConfig;
@@ -66,6 +124,11 @@ async function handleInboundMessage(params: {
 
   log(`sharecrm[${account.accountId}]: 收到消息来自 ${senderName} (${senderId})，会话 ${chatId} (${data.chat_type})`);
 
+  // 记录私聊 userId -> chatId 映射，确保后续回复使用合法 chat_id。
+  if (!isGroup) {
+    rememberDirectChatId(account.accountId, senderId, chatId);
+  }
+
   // 私聊策略检查
   const channelCfg = account.config;
   const dmPolicy = channelCfg?.dmPolicy ?? "open";
@@ -93,7 +156,7 @@ async function handleInboundMessage(params: {
       if (dmPolicy === "pairing") {
         const { code, created } = await pairing.upsertPairingRequest({
           id: senderId,
-          meta: { name: senderName },
+          meta: { name: senderName, chat_id: chatId },
         });
         if (created) {
           log(`sharecrm[${account.accountId}]: 收到来自 ${senderId} 的配对请求`);
@@ -143,7 +206,7 @@ async function handleInboundMessage(params: {
   // 会话路由
   const peerId = isGroup ? chatId : senderId;
   const from = `sharecrm:${senderId}`;
-  const to = isGroup ? `chat:${chatId}` : `user:${senderId}`;
+  const to = `chat:${chatId}`;
 
   const route = core.channel.routing.resolveAgentRoute({
     cfg,
@@ -298,9 +361,9 @@ async function monitorSingleAccount(params: {
   return new Promise<void>((resolve) => {
     const client = new ShareCrmClient({
       account,
-      onConnected: (botId, botName) => {
-        botInfo.set(accountId, { botId, botName });
-        log(`sharecrm[${accountId}]: 已连接为 ${botName} (${botId})`);
+      onConnected: (botId) => {
+        botInfo.set(accountId, { botId });
+        log(`sharecrm[${accountId}]: 已连接为 ${botId}`);
       },
       onMessage: (event) => {
         handleInboundMessage({
@@ -330,6 +393,7 @@ async function monitorSingleAccount(params: {
       client.disconnect();
       activeClients.delete(accountId);
       botInfo.delete(accountId);
+      directChatByUserByAccount.delete(accountId);
       resolve();
     };
 
@@ -399,7 +463,7 @@ export function getActiveClient(accountId: string): ShareCrmClient | undefined {
 /**
  * 获取账号的 Bot 信息
  */
-export function getBotInfo(accountId: string): { botId: string; botName: string } | undefined {
+export function getBotInfo(accountId: string): { botId: string } | undefined {
   return botInfo.get(accountId);
 }
 
@@ -414,11 +478,13 @@ export function stopShareCrmMonitor(accountId?: string): void {
       activeClients.delete(accountId);
     }
     botInfo.delete(accountId);
+    directChatByUserByAccount.delete(accountId);
   } else {
     for (const client of activeClients.values()) {
       client.disconnect();
     }
     activeClients.clear();
     botInfo.clear();
+    directChatByUserByAccount.clear();
   }
 }
