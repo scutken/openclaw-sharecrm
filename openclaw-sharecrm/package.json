@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "build": "tsc && npm run bundle",
-    "bundle": "esbuild dist/index.js --bundle --platform=node --format=esm --outfile=dist/index.bundled.js --external:openclaw --external:openclaw/*"
+    "bundle": "esbuild dist/index.js --bundle --platform=node --format=esm --outfile=dist/sharecrm.js --external:openclaw --external:openclaw/*"
   },
   "dependencies": {
-    "eventsource": "^4.1.0",
+    "eventsource": "^2.0.2",
+    "undici": "^7.22.0",
     "ws": "^8.18.0",
     "zod": "^4.3.6"
   },
@@ -17,7 +18,7 @@
   },
   "openclaw": {
     "extensions": [
-      "./dist/index.bundled.js"
+      "./sharecrm.js"
     ],
     "channel": {
       "id": "sharecrm",

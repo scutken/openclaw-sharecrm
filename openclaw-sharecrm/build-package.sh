@@ -13,10 +13,11 @@ npm run build
 mkdir -p dist-package
 
 # 复制必要文件
-cp -r dist dist-package/
+cp dist/sharecrm.js dist-package/
 cp package.json dist-package/
 cp openclaw.plugin.json dist-package/
 cp README.md dist-package/
+cp GATEWAY_API.md dist-package/
 
 # 获取版本号
 VERSION=$(node -p "require('./package.json').version")

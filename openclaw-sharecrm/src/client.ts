@@ -6,7 +6,8 @@
  * - REST API: 发送消息到服务端
  */
 
-import { EventSource, type ErrorEvent } from "eventsource";
+import https from "https";
+import http from "http";
 import type {
   ShareCrmServerMessage,
   ShareCrmSseEvent,
@@ -17,7 +18,6 @@ import type {
 
 const RECONNECT_DELAY_MS = 3000;
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000; // 提前 5 分钟刷新 Token
-const SSE_RETRY_DELAY_MS = 3000; // SSE 重连延迟
 
 export type ShareCrmClientOptions = {
   account: ResolvedShareCrmAccount;
@@ -29,13 +29,14 @@ export type ShareCrmClientOptions = {
 };
 
 export class ShareCrmClient {
-  private eventSource: EventSource | null = null;
+  private request: http.ClientRequest | null = null;
   private accessToken: string | null = null;
   private tokenExpiresAt: number = 0;
   private options: ShareCrmClientOptions;
   private shouldReconnect = true;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _connected = false;
+  private _connecting = false;
 
   constructor(options: ShareCrmClientOptions) {
     this.options = options;
@@ -62,7 +63,6 @@ export class ShareCrmClient {
     }
 
     this.accessToken = data.data.accessToken;
-    // 提前 5 分钟刷新
     this.tokenExpiresAt = Date.now() + data.data.expiresIn * 1000 - TOKEN_REFRESH_BUFFER_MS;
 
     return this.accessToken;
@@ -76,88 +76,153 @@ export class ShareCrmClient {
     return this.fetchAccessToken();
   }
 
-  /** 构建 SSE URL */
-  private async buildSseUrl(): Promise<string> {
-    const token = await this.ensureToken();
-    const { gatewayBaseUrl } = this.options.account;
-    return `${gatewayBaseUrl}/im-gateway/bot/events?token=${token}`;
-  }
-
-  /** 连接到 Gateway */
+  /** 连接到 Gateway (使用原生 https 模块) */
   async connect(): Promise<void> {
-    if (this.eventSource) {
+    if (this.request || this._connecting) {
       return;
     }
+    this._connecting = true;
 
     const log = this.options.log ?? console.log;
 
     try {
-      const url = await this.buildSseUrl();
-      log(`sharecrm: 正在连接 SSE ${url.replace(/\?token=.+$/, "?token=***")}`);
+      const token = await this.ensureToken();
+      const { gatewayBaseUrl } = this.options.account;
+      const urlStr = `${gatewayBaseUrl}/im-gateway/bot/events?token=${token}`;
+      const url = new URL(urlStr);
 
-      this.eventSource = new EventSource(url);
+      log(`sharecrm: 正在连接 SSE ${urlStr.replace(/\?token=.+$/, "?token=***")}`);
 
-      this.eventSource.onopen = () => {
-        log("sharecrm: SSE 连接已建立");
+      const httpModule = url.protocol === "https:" ? https : http;
+
+      const reqOptions: https.RequestOptions = {
+        hostname: url.hostname,
+        port: url.port || (url.protocol === "https:" ? 443 : 80),
+        path: url.pathname + url.search,
+        method: "GET",
+        headers: {
+          "Accept": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+        },
       };
 
-      this.eventSource.onmessage = (event: MessageEvent) => {
-        // 处理未命名的事件（通常不会用到）
-        log(`sharecrm: 收到未命名 SSE 事件: ${event.data}`);
-      };
+      this.request = httpModule.request(reqOptions, (res) => {
+        this._connecting = false;
 
-      this.eventSource.onerror = (error: ErrorEvent) => {
-        const state = this.eventSource?.readyState;
-        // EventSource 会自动尝试重连，但我们手动控制重连逻辑
-        if (state === EventSource.CLOSED) {
-          this._connected = false;
-          log("sharecrm: SSE 连接已关闭");
-          this.eventSource?.close();
-          this.eventSource = null;
-          this.options.onDisconnected("SSE connection closed");
+        if (res.statusCode !== 200) {
+          log(`sharecrm: SSE 连接失败, statusCode=${res.statusCode}`);
+          this.cleanupRequest();
           this.scheduleReconnect();
-        } else if (state === EventSource.CONNECTING) {
-          log("sharecrm: SSE 正在重连...");
+          return;
         }
-      };
 
-      // 监听特定事件
-      this.eventSource.addEventListener("connected", (event: MessageEvent) => {
-        try {
-          const msg: ShareCrmSseEvent = JSON.parse(event.data);
-          this.handleSseEvent(msg);
-        } catch (err) {
-          log(`sharecrm: connected 事件解析失败: ${String(err)}`);
-        }
+        log(`sharecrm: SSE 连接已建立, statusCode=${res.statusCode}`);
+
+        let buffer = "";
+
+        res.on("data", (chunk: Buffer) => {
+          buffer += chunk.toString();
+          this.parseSSEBuffer(buffer, (event, data) => {
+            this.handleParsedEvent(event, data);
+          });
+          // 清理已处理的事件
+          const lastDoubleNewline = buffer.lastIndexOf("\n\n");
+          if (lastDoubleNewline !== -1) {
+            buffer = buffer.slice(lastDoubleNewline + 2);
+          }
+        });
+
+        res.on("end", () => {
+          log("sharecrm: SSE 连接已关闭");
+          const wasConnected = this._connected;
+          this._connected = false;
+          this.cleanupRequest();
+          if (wasConnected) {
+            this.options.onDisconnected("SSE connection closed");
+          }
+          this.scheduleReconnect();
+        });
+
+        res.on("error", (err) => {
+          log(`sharecrm: SSE 响应错误: ${err.message}`);
+          const wasConnected = this._connected;
+          this._connected = false;
+          this.cleanupRequest();
+          if (wasConnected) {
+            this.options.onDisconnected("SSE response error");
+          }
+          this.scheduleReconnect();
+        });
       });
 
-      this.eventSource.addEventListener("ping", (_event: MessageEvent) => {
-        // 心跳事件，无需处理，只记录日志
-        log("sharecrm: 收到心跳 ping");
+      this.request.on("error", (err) => {
+        this._connecting = false;
+        log(`sharecrm: SSE 请求错误: ${err.message}`);
+        this.cleanupRequest();
+        this.options.onError?.(err);
+        this.scheduleReconnect();
       });
 
-      this.eventSource.addEventListener("message", (event: MessageEvent) => {
-        try {
-          const msg: ShareCrmSseEvent = JSON.parse(event.data);
-          this.handleSseEvent(msg);
-        } catch (err) {
-          log(`sharecrm: message 事件解析失败: ${String(err)}`);
-        }
+      this.request.on("timeout", () => {
+        this._connecting = false;
+        log("sharecrm: SSE 请求超时");
+        this.cleanupRequest();
+        this.scheduleReconnect();
       });
 
-      this.eventSource.addEventListener("error", (event: MessageEvent) => {
-        try {
-          const msg: ShareCrmSseEvent = JSON.parse(event.data);
-          this.handleSseEvent(msg);
-        } catch (err) {
-          log(`sharecrm: error 事件解析失败: ${String(err)}`);
-        }
-      });
+      this.request.setTimeout(30000); // 30秒超时
+      this.request.end();
 
     } catch (err) {
+      this._connecting = false;
       log(`sharecrm: 连接失败: ${String(err)}`);
       this.options.onError?.(err instanceof Error ? err : new Error(String(err)));
       this.scheduleReconnect();
+    }
+  }
+
+  /** 清理请求 */
+  private cleanupRequest(): void {
+    if (this.request) {
+      this.request.destroy();
+      this.request = null;
+    }
+  }
+
+  /** 解析 SSE 事件流 */
+  private parseSSEBuffer(buffer: string, callback: (event: string, data: string) => void): void {
+    const events = buffer.split("\n\n");
+    for (const eventBlock of events) {
+      if (!eventBlock.trim()) continue;
+
+      let eventName = "message";
+      let data = "";
+
+      const lines = eventBlock.split("\n");
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          eventName = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          data = line.slice(5).trim();
+        }
+      }
+
+      if (data) {
+        callback(eventName, data);
+      }
+    }
+  }
+
+  /** 处理解析后的事件 */
+  private handleParsedEvent(eventName: string, data: string): void {
+    const log = this.options.log ?? console.log;
+
+    try {
+      const msg: ShareCrmSseEvent = JSON.parse(data);
+      this.handleSseEvent(msg);
+    } catch (err) {
+      log(`sharecrm: ${eventName} 事件解析失败: ${String(err)}, data=${data}`);
     }
   }
 
@@ -182,7 +247,7 @@ export class ShareCrmClient {
         break;
 
       case "ping":
-        // 心跳事件，忽略
+        log("sharecrm: 收到心跳 ping");
         break;
     }
   }
@@ -244,10 +309,7 @@ export class ShareCrmClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
-    }
+    this.cleanupRequest();
     this._connected = false;
   }
 }
