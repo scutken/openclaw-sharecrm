@@ -104,7 +104,7 @@ public class QixinMessage {
          */
         public String extractUserName() {
             if (senderFullId == null) {
-                return "未知用户";
+                return "Unknown User";
             }
             String[] parts = senderFullId.split("\\.");
             return parts.length > 2 ? parts[2] : senderFullId;

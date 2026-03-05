@@ -65,12 +65,12 @@ public class QixinSessionId {
      */
     public static QixinSessionId decode(String chatId) {
         if (chatId == null || chatId.isEmpty()) {
-            throw new IllegalArgumentException("chatId 不能为空");
+            throw new IllegalArgumentException("chatId cannot be null or empty");
         }
 
         String[] parts = chatId.split(SEPARATOR, 4);
         if (parts.length < 3) {
-            throw new IllegalArgumentException("chatId 格式错误: " + chatId);
+            throw new IllegalArgumentException("chatId format error: " + chatId);
         }
 
         try {
@@ -81,26 +81,7 @@ public class QixinSessionId {
                     .parentSessionId(parts.length > 3 && !parts[3].isEmpty() ? parts[3] : null)
                     .build();
         } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("env 必须是数字: " + parts[0]);
-        }
-    }
-
-    /**
-     * 判断是否是企信格式的 chatId
-     */
-    public static boolean isQixinFormat(String chatId) {
-        if (chatId == null || chatId.isEmpty()) {
-            return false;
-        }
-        String[] parts = chatId.split(SEPARATOR, 4);
-        if (parts.length < 3) {
-            return false;
-        }
-        try {
-            Integer.parseInt(parts[0]);
-            return true;
-        } catch (NumberFormatException e) {
-            return false;
+            throw new IllegalArgumentException("env must be a number: " + parts[0]);
         }
     }
 
