@@ -44,11 +44,11 @@ package-sharecrm-plugin:
     - cp openclaw-sharecrm/openclaw.plugin.json dist-package/
     - cp openclaw-sharecrm/README.md dist-package/
     - cd dist-package
-    - PLUGIN_VERSION=$(node -p "require('./package.json').version")
-    - zip -r ../${PLUGIN_NAME}-v${PLUGIN_VERSION}.zip .
+    - 'PLUGIN_VERSION=$(node -p "require('./'"'"'package.json'"'"').version")'
+    - 'zip -r ../${PLUGIN_NAME}-v${PLUGIN_VERSION}.zip .'
     - cd ..
     - rm -rf dist-package
-    - echo "✅ 构建完成: ${PLUGIN_NAME}-v${PLUGIN_VERSION}.zip"
+    - 'echo "✅ 构建完成: ${PLUGIN_NAME}-v${PLUGIN_VERSION}.zip"'
   artifacts:
     name: "${PLUGIN_NAME}-${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}"
     paths:
