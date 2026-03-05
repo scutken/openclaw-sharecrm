@@ -11,11 +11,11 @@ import {
   type WizardPrompter,
 } from "openclaw/plugin-sdk";
 import { resolveAccount } from "./accounts.js";
+import { DEFAULT_GATEWAY_BASE_URL } from "./accounts.js";
 import type { ResolvedShareCrmAccount, ShareCrmChannelConfig } from "./types.js";
 
 const CHANNEL_ID = "sharecrm";
 const DEFAULT_ACCOUNT_ID = "default";
-const DEFAULT_GATEWAY_BASE_URL = "https://open.fxiaoke.com";
 
 /**
  * Set ShareCRM account configuration
@@ -168,7 +168,9 @@ const dmPolicy: ChannelOnboardingDmPolicy = {
     const entry = await prompter.text({
       message: "允许的用户 ID（每行一个，用于安全限制）",
       placeholder: "user-001",
-      initialValue: existingAllowFrom[0] ? String(existingAllowFrom[0]) : undefined,
+      initialValue: existingAllowFrom.length > 0
+        ? existingAllowFrom.map(String).join("\n")
+        : undefined,
     });
 
     const allowFrom = String(entry ?? "")

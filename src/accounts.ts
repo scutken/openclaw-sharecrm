@@ -6,7 +6,7 @@
 import type { ShareCrmChannelConfig, ResolvedShareCrmAccount } from "./types.js";
 
 const DEFAULT_ACCOUNT_ID = "default";
-const DEFAULT_GATEWAY_BASE_URL = "https://open.fxiaoke.com";
+export const DEFAULT_GATEWAY_BASE_URL = "https://open.fxiaoke.com";
 
 /** 从完整配置中提取渠道配置 */
 function getChannelConfig(cfg: any): ShareCrmChannelConfig | undefined {

@@ -9,7 +9,6 @@
 import https from "https";
 import http from "http";
 import type {
-  ShareCrmServerMessage,
   ShareCrmSseEvent,
   ResolvedShareCrmAccount,
   AuthTokenResponse,
@@ -22,7 +21,7 @@ const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000; // 提前 5 分钟刷新 Token
 export type ShareCrmClientOptions = {
   account: ResolvedShareCrmAccount;
   onConnected: (botId: string) => void;
-  onMessage: (data: ShareCrmServerMessage & { type: "message" }) => void;
+  onMessage: (data: ShareCrmSseEvent & { type: "message" }) => void;
   onDisconnected: (reason: string) => void;
   onError?: (error: Error) => void;
   log?: (...args: any[]) => void;
@@ -123,14 +122,9 @@ export class ShareCrmClient {
 
         res.on("data", (chunk: Buffer) => {
           buffer += chunk.toString();
-          this.parseSSEBuffer(buffer, (event, data) => {
+          buffer = this.parseSSEBuffer(buffer, (event, data) => {
             this.handleParsedEvent(event, data);
           });
-          // 清理已处理的事件
-          const lastDoubleNewline = buffer.lastIndexOf("\n\n");
-          if (lastDoubleNewline !== -1) {
-            buffer = buffer.slice(lastDoubleNewline + 2);
-          }
         });
 
         res.on("end", () => {
@@ -171,7 +165,7 @@ export class ShareCrmClient {
         this.scheduleReconnect();
       });
 
-      this.request.setTimeout(30000); // 30秒超时
+      this.request.setTimeout(60000); // 60秒超时（服务端 ping 间隔 30s，留 2x 余量）
       this.request.end();
 
     } catch (err) {
@@ -190,28 +184,29 @@ export class ShareCrmClient {
     }
   }
 
-  /** 解析 SSE 事件流 */
-  private parseSSEBuffer(buffer: string, callback: (event: string, data: string) => void): void {
-    const events = buffer.split("\n\n");
-    for (const eventBlock of events) {
-      if (!eventBlock.trim()) continue;
+  /** 解析 SSE 事件流，返回未处理的剩余 buffer */
+  private parseSSEBuffer(buffer: string, callback: (event: string, data: string) => void): string {
+    const blocks = buffer.split("\n\n");
+    const remaining = blocks.pop() ?? ""; // 最后一块可能不完整
+    for (const block of blocks) {
+      if (!block.trim()) continue;
 
       let eventName = "message";
-      let data = "";
+      const dataLines: string[] = [];
 
-      const lines = eventBlock.split("\n");
-      for (const line of lines) {
+      for (const line of block.split("\n")) {
         if (line.startsWith("event:")) {
           eventName = line.slice(6).trim();
         } else if (line.startsWith("data:")) {
-          data = line.slice(5).trim();
+          dataLines.push(line.slice(5).trim());
         }
       }
 
-      if (data) {
-        callback(eventName, data);
+      if (dataLines.length > 0) {
+        callback(eventName, dataLines.join("\n"));
       }
     }
+    return remaining;
   }
 
   /** 处理解析后的事件 */
