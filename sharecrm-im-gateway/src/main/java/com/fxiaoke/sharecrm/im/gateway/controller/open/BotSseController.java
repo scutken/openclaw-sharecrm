@@ -1,5 +1,6 @@
 package com.fxiaoke.sharecrm.im.gateway.controller.open;
 
+import cn.hutool.core.thread.ThreadUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fxiaoke.sharecrm.im.gateway.entity.Account;
 import com.fxiaoke.sharecrm.im.gateway.service.AuthException;
@@ -9,7 +10,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -18,10 +22,10 @@ import java.util.Map;
 
 /**
  * Bot SSE 控制器
- *
+ * <p>
  * 替代 BotWebSocketHandler，提供 SSE 长连接支持
  * 路径: GET /im-gateway/bot/events?token={accessToken}
- *
+ * <p>
  * 协议说明：
  * - 连接即鉴权，token 放 URL query param
  * - 事件类型: connected, ping, message, error
@@ -79,25 +83,26 @@ public class BotSseController {
 
         // 创建 SSE Emitter
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT);
+        ThreadUtil.execute(() -> {
+                    // 注册会话
+                    boolean isNew = sseSessionManager.registerBot(appId, emitter);
 
-        // 注册会话
-        boolean isNew = sseSessionManager.registerBot(appId, emitter);
-
-        // 发送 connected 事件
-        try {
-            emitter.send(SseEmitter.event()
-                    .name("connected")
-                    .data(Map.of(
-                            "type", "connected",
-                            "data", Map.of("bot_id", appId)
-                    )));
-            log.info("Bot SSE connected: appId={}, isNew={}", appId, isNew);
-        } catch (IOException e) {
-            log.error("Failed to send connected event: appId={}", appId);
-            sseSessionManager.unregisterBot(appId);
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to establish SSE connection");
-        }
-
+                    // 发送 connected 事件
+                    try {
+                        emitter.send(SseEmitter.event()
+                                .name("connected")
+                                .data(Map.of(
+                                        "type", "connected",
+                                        "data", Map.of("bot_id", appId)
+                                )));
+                        log.info("Bot SSE connected: appId={}, isNew={}", appId, isNew);
+                    } catch (IOException e) {
+                        log.error("Failed to send connected event: appId={}", appId);
+                        sseSessionManager.unregisterBot(appId);
+                        throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to establish SSE connection");
+                    }
+                }
+        );
         return emitter;
     }
 }
