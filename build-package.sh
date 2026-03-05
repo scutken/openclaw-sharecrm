@@ -1,5 +1,5 @@
 #!/bin/bash
-# 构建并打包脚本
+# Windows 本地构建脚本 (Git Bash / MSYS2 / Cygwin)
 
 set -e
 
@@ -18,12 +18,16 @@ cp package.json dist-package/
 cp openclaw.plugin.json dist-package/
 cp README.md dist-package/
 
-# 创建压缩包
+# 获取版本号
+VERSION=$(node -p "require('./package.json').version")
+ZIP_NAME="openclaw-sharecrm-v${VERSION}.zip"
+
+# 创建压缩包 (使用 PowerShell 的 Compress-Archive)
 cd dist-package
-zip -r ../openclaw-sharecrm-v$(node -p "require('./package.json').version").zip .
+powershell -Command "Compress-Archive -Path * -DestinationPath ../$ZIP_NAME -Force"
 cd ..
 
 # 清理
 rm -rf dist-package
 
-echo "✅ 构建完成: openclaw-sharecrm-v$(node -p "require('./package.json').version").zip"
+echo "✅ 构建完成: $ZIP_NAME"
