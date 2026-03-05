@@ -36,8 +36,6 @@ import java.util.Map;
 @RequestMapping("/im-gateway")
 @RequiredArgsConstructor
 public class BotSseController {
-
-    private final ObjectMapper objectMapper;
     private final AuthService authService;
     private final SseSessionManager sseSessionManager;
 
