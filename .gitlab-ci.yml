@@ -10,8 +10,8 @@ variables:
 build-sharecrm-plugin:
   stage: build
   image: node:${NODE_VERSION}-alpine
-  working_directory: openclaw-sharecrm
   script:
+    - cd openclaw-sharecrm
     - npm ci
     - npm run build
   artifacts:
