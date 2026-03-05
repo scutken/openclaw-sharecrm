@@ -59,7 +59,7 @@ public class QixinMessageController {
         String token = authHeader.substring(7); // 去掉 "Bearer " 前缀
 
         // 处理 chatId
-        String chatId = resolveChatId(request);
+        String chatId = request.getChatId();
         if (chatId == null || chatId.isEmpty()) {
             return Result.error(ErrorCode.PARAM_INVALID, "chat_id cannot be empty");
         }
@@ -101,7 +101,7 @@ public class QixinMessageController {
 
         SendOpenAgentMessageArg arg = new SendOpenAgentMessageArg();
         arg.setEnv(qixinSessionId.getEnv());
-        arg.setEa(qixinSessionId.getEa());
+        arg.setEa(account.getEa());
         arg.setSessionId(qixinSessionId.getSessionId());
         arg.setParentSessionId(qixinSessionId.getParentSessionId());
         arg.setBotFullId(botFullId);
@@ -125,29 +125,10 @@ public class QixinMessageController {
         sessionManager.broadcastBotMessageToSimulators(appId, qixinSessionId.getSessionId(), messageId, request.getText());
 
         log.info("[TO Qixin] appId={}, env={}, ea={}, sessionId={}, text={}, messageId={}",
-                appId, qixinSessionId.getEnv(), qixinSessionId.getEa(),
+                appId, qixinSessionId.getEnv(), account.getEa(),
                 qixinSessionId.getSessionId(), request.getText(), messageId);
 
         return Result.success(Map.of("message_id", messageId));
-    }
-
-    private String resolveChatId(InboundRequest request) {
-        // 优先使用直接传的 chatId
-        if (request.getChatId() != null && !request.getChatId().isEmpty()) {
-            return request.getChatId();
-        }
-
-        // 尝试从企信字段构建 chatId
-        if (request.getSessionId() != null && !request.getSessionId().isEmpty()) {
-            return QixinSessionId.of(
-                    request.getEnv(),
-                    request.getEa(),
-                    request.getSessionId(),
-                    request.getParentSessionId()
-            ).encode();
-        }
-
-        return null;
     }
 
     /**
@@ -159,15 +140,6 @@ public class QixinMessageController {
         private String chatId;
 
         private String text;
-
-        private int env;
-        private String ea;
-
-        @JsonProperty("session_id")
-        private String sessionId;
-
-        @JsonProperty("parent_session_id")
-        private String parentSessionId;
 
         @JsonProperty("reply_message_id")
         private Long replyMessageId;
