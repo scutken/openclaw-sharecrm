@@ -1,6 +1,6 @@
 package com.fxiaoke.sharecrm.im.gateway.config;
 
-import org.springframework.boot.web.servlet.ServletRegistrationBean;
+import org.springframework.boot.autoconfigure.web.servlet.DispatcherServletRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.DispatcherServlet;
@@ -15,9 +15,9 @@ import org.springframework.web.servlet.DispatcherServlet;
 public class AsyncSupportConfig {
 
     @Bean
-    public ServletRegistrationBean<DispatcherServlet> dispatcherServletRegistration(DispatcherServlet dispatcherServlet) {
-        ServletRegistrationBean<DispatcherServlet> registration = 
-            new ServletRegistrationBean<>(dispatcherServlet, "/");
+    public DispatcherServletRegistrationBean dispatcherServletRegistration(DispatcherServlet dispatcherServlet) {
+        DispatcherServletRegistrationBean registration = 
+            new DispatcherServletRegistrationBean(dispatcherServlet, "/");
         registration.setAsyncSupported(true);
         registration.setName("dispatcherServlet");
         registration.setLoadOnStartup(1);
