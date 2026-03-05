@@ -8,9 +8,8 @@
     "bundle": "esbuild dist/index.js --bundle --platform=node --format=esm --outfile=dist/sharecrm.js --external:openclaw --external:openclaw/*",
     "build:package": "npm run build && node ./scripts/build-package.mjs"
   },
-  "dependencies": {},
   "peerDependencies": {
-    "openclaw": "*"
+    "openclaw": "^2026.3.2"
   },
   "peerDependenciesMeta": {
     "openclaw": {
