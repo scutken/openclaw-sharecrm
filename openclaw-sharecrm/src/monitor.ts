@@ -1,7 +1,7 @@
 /**
  * ShareCRM Gateway 监控器
  *
- * 管理与 ShareCRM IM Gateway 的 WebSocket 连接，
+ * 管理与 ShareCRM IM Gateway 的 SSE 连接，
  * 分发入站消息给 Agent，处理回复
  */
 
@@ -24,7 +24,7 @@ import {
 import { resolveAccount, listEnabledAccounts } from "./accounts.js";
 import { ShareCrmClient } from "./client.js";
 import { getShareCrmRuntime } from "./runtime.js";
-import type { ResolvedShareCrmAccount, ShareCrmServerMessage } from "./types.js";
+import type { ResolvedShareCrmAccount, ShareCrmSseEvent } from "./types.js";
 
 const CHANNEL_ID = "sharecrm";
 
@@ -104,7 +104,7 @@ export type MonitorShareCrmOpts = {
 async function handleInboundMessage(params: {
   cfg: OpenClawConfig;
   account: ResolvedShareCrmAccount;
-  event: ShareCrmServerMessage & { type: "message" };
+  event: ShareCrmSseEvent & { type: "message" };
   runtime?: RuntimeEnv;
   chatHistories: Map<string, HistoryEntry[]>;
   client: ShareCrmClient;

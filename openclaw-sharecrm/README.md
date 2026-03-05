@@ -3,11 +3,14 @@
 
 # 🦞OpenClaw 纷享销客插件
 
-将你的 OpenClaw接入 纷享销客（ShareCRM）企信 。内测中，暂不可使用。
+将 OpenClaw 接入纷享销客（ShareCRM）企信。
 
 ## 概述
 
-本插件通过 WebSocket 纷享销客（ShareCRM）企信
+本插件采用 **SSE 下行 + REST 上行** 与 ShareCRM IM Gateway 通信：
+
+- SSE：接收消息与连接事件
+- REST：发送回复消息
 
 ## 特性
 
@@ -17,7 +20,12 @@
 
 ## 快速开始
 
-### 1. 安装插件
+### 1. 环境准备
+
+- Node.js `>=20`
+- OpenClaw（目标运行环境）
+
+### 2. 安装插件
 
 **方式一：使用预构建包（推荐）**
 
@@ -31,18 +39,31 @@ unzip openclaw-sharecrm-v1.0.0.zip -d /path/to/openclaw/extensions/sharecrm
 **方式二：本地开发安装**
 
 ```shell
-# 克隆项目到openclaw的机器上
+# 克隆项目到 OpenClaw 机器
 git clone https://github.com/scutken/openclaw-sharecrm.git
 cd openclaw-sharecrm
-npm install
+
+# 仅安装构建依赖，避免拉取 peer 依赖
+npm ci --omit=peer --omit=optional
+
+# 构建插件
 npm run build
+
 # 安装插件，链接方式
 openclaw plugins install -l .
 ```
 
-### 2. 配置
+如果需要产出可分发 zip：
 
-cli交互式配置
+```shell
+npm run build:package
+```
+
+命令会在当前目录产出 `openclaw-sharecrm-v<version>.zip`，并覆盖同名文件。
+
+### 3. 配置
+
+CLI 交互式配置：
 
 ```shell
 # 方式 A：使用 onboard 命令
@@ -55,16 +76,12 @@ openclaw configure --section channels
 
 ## 配置内容
 
-目前需要由 IM-Gatway 服务负责人提供
-
+```json
 {
-  "gatewayUrl": "wss://open.ceshi112.com",
-  "apiBaseUrl": "https://open.ceshi112.com",
+  "gatewayBaseUrl": "https://open.fxiaoke.com",
   "appId": "bot-qqq111",
   "appSecret": "__OPENCLAW_REDACTED__",
+  "dmPolicy": "pairing",
   "enabled": true
 }
-
-## 协议
-
-完整协议参阅 [ShareCRM IM Gateway API 文档](./GATEWAY_API.md)。
+```

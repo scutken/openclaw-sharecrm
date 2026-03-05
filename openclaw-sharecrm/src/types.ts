@@ -79,47 +79,6 @@ export interface AuthTokenResponse {
   msg?: string;
 }
 
-// ============ Gateway 服务端消息 (下行, server → plugin) ============
-
-/** 连接成功确认消息 */
-export interface ShareCrmConnectedMessage {
-  type: "connected";
-  data: {
-    bot_id: string;
-  };
-}
-
-/** 用户入站消息 */
-export interface ShareCrmMessageEvent {
-  type: "message";
-  data: {
-    message_id: string;
-    chat_id: string;
-    chat_type: "direct" | "group";
-    from: {
-      id: string;
-      name: string;
-    };
-    text: string;
-    date: number; // Unix 时间戳（秒）
-  };
-}
-
-/** 错误响应 */
-export interface ShareCrmErrorMessage {
-  type: "error";
-  error: {
-    code: string;
-    message: string;
-  };
-}
-
-/** 服务端下行消息联合类型 (WebSocket 兼容) */
-export type ShareCrmServerMessage =
-  | ShareCrmConnectedMessage
-  | ShareCrmMessageEvent
-  | ShareCrmErrorMessage;
-
 // ============ REST API 类型 (上行, plugin → server) ============
 
 /** 发送消息请求 */

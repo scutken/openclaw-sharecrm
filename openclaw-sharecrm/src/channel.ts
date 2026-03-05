@@ -1,7 +1,7 @@
 /**
  * ShareCRM OpenClaw 渠道插件
  *
- * 实现 ChannelPlugin 接口，通过 WebSocket 连接 ShareCRM IM Gateway
+ * 实现 ChannelPlugin 接口，通过 SSE 连接 ShareCRM IM Gateway
  */
 
 import type { ChannelMeta, ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk";
