@@ -2,6 +2,64 @@
  * ShareCRM IM 渠道插件类型定义
  */
 
+// ============ SSE 事件类型 ============
+
+/** SSE 连接成功事件 */
+export interface ShareCrmSseConnectedEvent {
+  type: "connected";
+  data: {
+    bot_id: string;
+  };
+}
+
+/** SSE 心跳事件 */
+export interface ShareCrmSsePingEvent {
+  type: "ping";
+  time: number;
+}
+
+/** SSE 消息事件 */
+export interface ShareCrmSseMessageEvent {
+  type: "message";
+  data: {
+    message_id: string;
+    chat_id: string;
+    chat_type: "direct" | "group";
+    from: {
+      id: string;
+      name: string;
+    };
+    text: string;
+    date: number;
+    qixin?: {
+      env: string;
+      ea: string;
+      session_id: string;
+      parent_session_id?: string;
+      bot_full_id: string;
+      message_type: string;
+      qixin_message_id: string;
+      reply_message_id?: string;
+    };
+  };
+}
+
+/** SSE 错误事件 */
+export interface ShareCrmSseErrorEvent {
+  type: "error";
+  error: {
+    code: string;
+    message: string;
+  };
+}
+
+/** SSE 事件联合类型 */
+export type ShareCrmSseEvent =
+  | ShareCrmSseConnectedEvent
+  | ShareCrmSsePingEvent
+  | ShareCrmSseMessageEvent
+  | ShareCrmSseErrorEvent;
+
 // ============ 鉴权相关 ============
 
 /** 获取 Token 请求 */
@@ -18,7 +76,7 @@ export interface AuthTokenResponse {
     expiresIn: number;
     tokenType: "Bearer";
   };
-  message?: string;
+  msg?: string;
 }
 
 // ============ Gateway 服务端消息 (下行, server → plugin) ============
@@ -56,7 +114,7 @@ export interface ShareCrmErrorMessage {
   };
 }
 
-/** 服务端下行消息联合类型 */
+/** 服务端下行消息联合类型 (WebSocket 兼容) */
 export type ShareCrmServerMessage =
   | ShareCrmConnectedMessage
   | ShareCrmMessageEvent
@@ -76,14 +134,14 @@ export interface SendMessageResponse {
   data?: {
     message_id: string;
   };
-  message?: string;
+  msg?: string;
 }
 
 /** API 通用响应 */
 export interface ApiResponse<T = unknown> {
   code: number;
   data?: T;
-  message?: string;
+  msg?: string;
 }
 
 // ============ 渠道配置 ============
@@ -91,8 +149,7 @@ export interface ApiResponse<T = unknown> {
 /** openclaw.yaml 中 channels.sharecrm 的原始配置 */
 export interface ShareCrmChannelConfig {
   enabled?: boolean;
-  gatewayUrl?: string;
-  apiBaseUrl?: string;
+  gatewayBaseUrl?: string;
   appId?: string;
   appSecret?: string;
   dmPolicy?: "open" | "pairing" | "allowlist" | "disabled";
@@ -110,8 +167,7 @@ export interface ShareCrmChannelConfig {
 export interface ShareCrmAccountConfigRaw {
   enabled?: boolean;
   name?: string;
-  gatewayUrl?: string;
-  apiBaseUrl?: string;
+  gatewayBaseUrl?: string;
   appId?: string;
   appSecret?: string;
   dmPolicy?: "open" | "pairing" | "allowlist" | "disabled";
@@ -124,8 +180,7 @@ export interface ResolvedShareCrmAccount {
   enabled: boolean;
   configured: boolean;
   name?: string;
-  gatewayUrl: string;
-  apiBaseUrl: string;
+  gatewayBaseUrl: string;
   appId: string;
   appSecret: string;
   config: ShareCrmChannelConfig;
