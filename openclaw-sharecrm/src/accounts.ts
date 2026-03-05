@@ -6,6 +6,7 @@
 import type { ShareCrmChannelConfig, ResolvedShareCrmAccount } from "./types.js";
 
 const DEFAULT_ACCOUNT_ID = "default";
+const DEFAULT_GATEWAY_BASE_URL = "https://open.fxiaoke.com";
 
 /** 从完整配置中提取渠道配置 */
 function getChannelConfig(cfg: any): ShareCrmChannelConfig | undefined {
@@ -51,25 +52,22 @@ export function resolveAccount(cfg: any, accountId?: string | null): ResolvedSha
   const accountOverride = channelCfg.accounts?.[id] ?? {};
 
   // 环境变量回退
-  const envGatewayUrl = process.env.SHARECRM_GATEWAY_URL ?? "";
-  const envApiBaseUrl = process.env.SHARECRM_API_BASE_URL ?? "";
+  const envGatewayBaseUrl = process.env.SHARECRM_GATEWAY_BASE_URL ?? "";
   const envAppId = process.env.SHARECRM_APP_ID ?? "";
   const envAppSecret = process.env.SHARECRM_APP_SECRET ?? "";
 
-  const gatewayUrl = accountOverride.gatewayUrl ?? channelCfg.gatewayUrl ?? envGatewayUrl;
-  const apiBaseUrl = accountOverride.apiBaseUrl ?? channelCfg.apiBaseUrl ?? envApiBaseUrl;
+  const gatewayBaseUrl = accountOverride.gatewayBaseUrl ?? channelCfg.gatewayBaseUrl ?? (envGatewayBaseUrl || DEFAULT_GATEWAY_BASE_URL);
   const appId = accountOverride.appId ?? channelCfg.appId ?? envAppId;
   const appSecret = accountOverride.appSecret ?? channelCfg.appSecret ?? envAppSecret;
 
-  const configured = Boolean(gatewayUrl && apiBaseUrl && appId && appSecret);
+  const configured = Boolean(gatewayBaseUrl && appId && appSecret);
 
   return {
     accountId: id,
     enabled: accountOverride.enabled ?? channelCfg.enabled ?? true,
     configured,
     name: accountOverride.name,
-    gatewayUrl,
-    apiBaseUrl,
+    gatewayBaseUrl,
     appId,
     appSecret,
     config: channelCfg,

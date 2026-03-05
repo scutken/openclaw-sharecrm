@@ -2,6 +2,7 @@ package com.fxiaoke.sharecrm.im.gateway.websocket;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fxiaoke.sharecrm.im.gateway.qixin.QixinMessage;
+import com.fxiaoke.sharecrm.im.gateway.sse.SseSessionManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -13,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 会话管理器
  * 
  * 管理两类会话：
- * 1. BotSession - Bot WebSocket 连接 (/bot{token})
+ * 1. Bot SSE 连接（通过 SseSessionManager）
  * 2. SimulatorSession - Web UI 模拟器的 WebSocket 连接
  */
 @Slf4j
@@ -22,147 +23,50 @@ import java.util.concurrent.ConcurrentHashMap;
 public class SessionManager {
 
     private final ObjectMapper objectMapper;
-
-    /**
-     * Bot 会话 (appId -> session)
-     */
-    private final Map<String, BotSession> botSessions = new ConcurrentHashMap<>();
+    private final SseSessionManager sseSessionManager;
 
     /**
      * 模拟器会话 (sessionId -> session)
      */
     private final Map<String, SimulatorSession> simulatorSessions = new ConcurrentHashMap<>();
 
-    // ==================== Bot 会话管理 ====================
+    // ==================== Bot 会话管理（委托给 SseSessionManager） ====================
 
     /**
-     * 注册 Bot 会话
+     * 检查 Bot 是否在线
      */
-    public void registerBot(String appId, BotSession session) {
-        BotSession existing = botSessions.put(appId, session);
-        if (existing != null) {
-            log.warn("Replacing existing Bot session: appId={}", appId);
-            existing.close();
-        }
-        log.info("Bot session registered: appId={}, sessionId={}", appId, session.getSessionId());
-    }
-
-    /**
-     * 注销 Bot 会话
-     */
-    public void unregisterBot(String appId) {
-        BotSession removed = botSessions.remove(appId);
-        if (removed != null) {
-            log.info("Bot session unregistered: appId={}", appId);
-        }
-    }
-
-    /**
-     * 获取 Bot 会话
-     */
-    public Optional<BotSession> getBotSession(String appId) {
-        return Optional.ofNullable(botSessions.get(appId));
+    public boolean isBotOnline(String appId) {
+        return sseSessionManager.isOnline(appId);
     }
 
     /**
      * 获取 Bot 在线数量
      */
     public int getBotOnlineCount() {
-        return botSessions.size();
+        return sseSessionManager.getBotOnlineCount();
     }
 
     /**
      * 获取所有在线 Bot 的 appId 列表
      */
     public List<String> getBotAppIds() {
-        return new ArrayList<>(botSessions.keySet());
+        return sseSessionManager.getBotAppIds();
     }
 
     /**
      * 向 Bot 发送消息
      */
-    public void sendMessageToBot(String appId, String chatId, String messageId, String text, 
+    public void sendMessageToBot(String appId, String chatId, String messageId, String text,
                                   String userId, String userName) {
-        getBotSession(appId).ifPresent(session -> {
-            try {
-                Map<String, Object> data = new LinkedHashMap<>();
-                data.put("message_id", messageId);
-                data.put("chat_id", chatId);
-                data.put("chat_type", "direct");
-                data.put("from", Map.of(
-                    "id", userId,
-                    "name", userName
-                ));
-                data.put("text", text);
-                data.put("date", System.currentTimeMillis() / 1000);
-
-                String json = objectMapper.writeValueAsString(Map.of(
-                    "type", "message",
-                    "data", data
-                ));
-                session.send(json);
-                log.debug("Message sent to Bot: appId={}, chatId={}", appId, chatId);
-            } catch (Exception e) {
-                log.error("Failed to send message to Bot: {}", e.getMessage());
-            }
-        });
+        sseSessionManager.sendMessageToBot(appId, chatId, messageId, text, userId, userName);
     }
 
     /**
      * 向 Bot 发送企信格式消息
-     * 
-     * 包含完整的企信上下文信息
      */
     public void sendQixinMessageToBot(String appId, String chatId, String messageId, String text,
                                        String userId, String userName, String chatType, QixinMessage.InboundMessage qixinMessage) {
-        getBotSession(appId).ifPresent(session -> {
-            try {
-                Map<String, Object> data = new LinkedHashMap<>();
-                data.put("message_id", messageId);
-                data.put("chat_id", chatId);
-                data.put("chat_type", normalizeChatType(chatType));
-                data.put("from", Map.of(
-                    "id", userId,
-                    "name", userName
-                ));
-                data.put("text", text);
-                data.put("date", qixinMessage.getMessageTimestamp() != null 
-                        ? qixinMessage.getMessageTimestamp() / 1000 
-                        : System.currentTimeMillis() / 1000);
-                
-                // 添加企信特有字段
-                Map<String, Object> qixinContext = new LinkedHashMap<>();
-                qixinContext.put("env", qixinMessage.getEnv());
-                qixinContext.put("ea", qixinMessage.getEa());
-                qixinContext.put("session_id", qixinMessage.getSessionId());
-                qixinContext.put("parent_session_id", qixinMessage.getParentSessionId());
-                qixinContext.put("bot_full_id", qixinMessage.getBotFullId());
-                qixinContext.put("message_type", qixinMessage.getMessageType());
-                qixinContext.put("qixin_message_id", qixinMessage.getMessageId());
-                qixinContext.put("reply_message_id", qixinMessage.getReplyMessageId());
-                data.put("qixin", qixinContext);
-
-                String json = objectMapper.writeValueAsString(Map.of(
-                    "type", "message",
-                    "data", data
-                ));
-                session.send(json);
-                log.debug("Qixin message sent to Bot: appId={}, chatId={}", appId, chatId);
-            } catch (Exception e) {
-                log.error("Failed to send Qixin message to Bot: {}", e.getMessage());
-            }
-        });
-    }
-
-    private String normalizeChatType(String chatType) {
-        if (chatType == null) {
-            return "direct";
-        }
-        String normalized = chatType.trim().toLowerCase();
-        if (normalized.isEmpty()) {
-            return "direct";
-        }
-        return ("group".equals(normalized) || "channel".equals(normalized)) ? "group" : "direct";
+        sseSessionManager.sendQixinMessageToBot(appId, chatId, messageId, text, userId, userName, chatType, qixinMessage);
     }
 
     // ==================== 模拟器会话管理 ====================

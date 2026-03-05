@@ -4,9 +4,11 @@
   "description": "ShareCRM IM Gateway channel plugin for OpenClaw",
   "type": "module",
   "scripts": {
-    "build": "tsc"
+    "build": "tsc && npm run bundle",
+    "bundle": "esbuild dist/index.js --bundle --platform=node --format=esm --outfile=dist/index.bundled.js --external:openclaw --external:openclaw/*"
   },
   "dependencies": {
+    "eventsource": "^4.1.0",
     "ws": "^8.18.0",
     "zod": "^4.3.6"
   },
@@ -15,7 +17,7 @@
   },
   "openclaw": {
     "extensions": [
-      "./dist/index.js"
+      "./dist/index.bundled.js"
     ],
     "channel": {
       "id": "sharecrm",
@@ -30,5 +32,10 @@
       "localPath": "extensions/sharecrm",
       "defaultChoice": "local"
     }
+  },
+  "devDependencies": {
+    "@types/eventsource": "^1.1.15",
+    "esbuild": "^0.27.3",
+    "typescript": "^5.9.3"
   }
 }

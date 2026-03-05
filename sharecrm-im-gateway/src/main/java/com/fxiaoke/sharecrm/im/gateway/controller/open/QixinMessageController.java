@@ -85,9 +85,8 @@ public class QixinMessageController {
         String appId = account.getAppId();
         String botFullId = account.getBotFullId();
 
-        // 检查 Bot 是否在线
-        var botSessionOpt = sessionManager.getBotSession(appId);
-        if (botSessionOpt.isEmpty()) {
+        // 检查 Bot 是否在线（SSE 或 WebSocket）
+        if (!sessionManager.isBotOnline(appId)) {
             log.warn("Bot offline: appId={}", appId);
             return Result.error(ErrorCode.BOT_NOT_CONNECTED);
         }

@@ -61,9 +61,8 @@ public class BotMessageController {
         var account = accountOpt.get();
         String appId = account.getAppId();
 
-        // 检查 Bot 是否在线
-        var botSessionOpt = sessionManager.getBotSession(appId);
-        if (botSessionOpt.isEmpty()) {
+        // 检查 Bot 是否在线（SSE 或 WebSocket）
+        if (!sessionManager.isBotOnline(appId)) {
             log.warn("Bot offline: appId={}, botFullId={}", appId, message.getBotFullId());
             return Result.error(ErrorCode.BOT_NOT_CONNECTED);
         }
