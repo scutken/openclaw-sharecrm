@@ -71,6 +71,7 @@ function commandExists(command, args) {
 
 async function main() {
   const stageDir = path.join(projectDir, "dist-package");
+  const packageDir = path.join(stageDir, "openclaw-sharecrm");
   const packageJson = JSON.parse(
     await readFile(path.join(projectDir, "package.json"), "utf8"),
   );
@@ -78,12 +79,12 @@ async function main() {
   const zipPath = path.join(projectDir, zipName);
 
   await removeDirWithRetry(stageDir);
-  await mkdir(stageDir, { recursive: true });
+  await mkdir(packageDir, { recursive: true });
   await removeFileWithRetry(zipPath);
 
   for (const relativeFile of requiredFiles) {
     const src = path.join(projectDir, relativeFile);
-    const dest = path.join(stageDir, path.basename(relativeFile));
+    const dest = path.join(packageDir, path.basename(relativeFile));
     await copyFile(src, dest);
   }
 

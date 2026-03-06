@@ -98,10 +98,13 @@ public class QixinMessageController {
         } catch (IllegalArgumentException e) {
             return Result.error(ErrorCode.PARAM_INVALID, "Invalid chat_id format: " + e.getMessage());
         }
+        String ea = account.getEa();
+        if (!qixinSessionId.getEa().equals(ea))
+            return Result.error(ErrorCode.PARAM_INVALID, "EA mismatch");
 
         SendOpenAgentMessageArg arg = new SendOpenAgentMessageArg();
         arg.setEnv(qixinSessionId.getEnv());
-        arg.setEa(account.getEa());
+        arg.setEa(ea);
         arg.setSessionId(qixinSessionId.getSessionId());
         arg.setParentSessionId(qixinSessionId.getParentSessionId());
         arg.setBotFullId(botFullId);
@@ -125,7 +128,7 @@ public class QixinMessageController {
         sessionManager.broadcastBotMessageToSimulators(appId, qixinSessionId.getSessionId(), messageId, request.getText());
 
         log.info("[TO Qixin] appId={}, env={}, ea={}, sessionId={}, text={}, messageId={}",
-                appId, qixinSessionId.getEnv(), account.getEa(),
+                appId, qixinSessionId.getEnv(), ea,
                 qixinSessionId.getSessionId(), request.getText(), messageId);
 
         return Result.success(Map.of("message_id", messageId));
