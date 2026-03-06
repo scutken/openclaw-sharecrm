@@ -217,6 +217,9 @@ async function handleInboundMessage(params: {
       id: peerId,
     },
   });
+  // Keep direct-chat sessions isolated by chat_id so the same user's
+  // concurrent DM windows do not collapse into one session.
+  const effectiveSessionKey = isGroup ? route.sessionKey : `${route.sessionKey}:chat:${chatId}`;
 
   // 构建 Agent 消息体
   const speaker = senderName || senderId;
@@ -258,7 +261,7 @@ async function handleInboundMessage(params: {
     ? `ShareCRM[${account.accountId}] message in group ${chatId}`
     : `ShareCRM[${account.accountId}] DM from ${senderId}`;
   core.system.enqueueSystemEvent(`${inboundLabel}: ${preview}`, {
-    sessionKey: route.sessionKey,
+    sessionKey: effectiveSessionKey,
     contextKey: `sharecrm:message:${chatId}:${messageId}`,
   });
 
@@ -270,7 +273,7 @@ async function handleInboundMessage(params: {
     CommandBody: text,
     From: from,
     To: to,
-    SessionKey: route.sessionKey,
+    SessionKey: effectiveSessionKey,
     AccountId: route.accountId,
     ChatType: isGroup ? "group" : "direct",
     GroupSubject: isGroup ? chatId : undefined,
@@ -311,7 +314,7 @@ async function handleInboundMessage(params: {
       onCleanup: () => {},
     });
 
-  log(`sharecrm[${account.accountId}]: 正在分发给 Agent (session=${route.sessionKey})`);
+  log(`sharecrm[${account.accountId}]: 正在分发给 Agent (session=${effectiveSessionKey})`);
 
   const { queuedFinal, counts } = await core.channel.reply.withReplyDispatcher({
     dispatcher,
