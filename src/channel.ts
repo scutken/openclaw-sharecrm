@@ -1,7 +1,7 @@
 /**
  * ShareCRM OpenClaw 渠道插件
  *
- * 实现 ChannelPlugin 接口，通过 WebSocket 连接 ShareCRM IM Gateway
+ * 实现 ChannelPlugin 接口，通过 SSE 连接 ShareCRM IM Gateway
  */
 
 import type { ChannelMeta, ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk";
@@ -87,8 +87,7 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
       additionalProperties: false,
       properties: {
         enabled: { type: "boolean" },
-        gatewayUrl: { type: "string" },
-        apiBaseUrl: { type: "string" },
+        gatewayBaseUrl: { type: "string" },
         appId: { type: "string" },
         appSecret: { type: "string" },
         dmPolicy: {
@@ -118,8 +117,7 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
             properties: {
               enabled: { type: "boolean" },
               name: { type: "string" },
-              gatewayUrl: { type: "string" },
-              apiBaseUrl: { type: "string" },
+              gatewayBaseUrl: { type: "string" },
               appId: { type: "string" },
               appSecret: { type: "string" },
             },
@@ -195,8 +193,7 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
       enabled: account.enabled,
       configured: account.configured,
       name: account.name,
-      gatewayUrl: account.gatewayUrl,
-      apiBaseUrl: account.apiBaseUrl,
+      gatewayBaseUrl: account.gatewayBaseUrl,
       appId: account.appId,
     }),
     resolveAllowFrom: ({ cfg, accountId }) => {
@@ -214,7 +211,7 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
       const warnings: string[] = [];
       if (!account.configured) {
         warnings.push(
-          `- ShareCRM[${account.accountId}]: not configured (missing gatewayUrl, apiBaseUrl, appId or appSecret).`,
+          `- ShareCRM[${account.accountId}]: not configured (missing gatewayBaseUrl, appId or appSecret).`,
         );
       }
       if (account.config?.dmPolicy === "open") {
@@ -344,8 +341,7 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
       enabled: account.enabled,
       configured: account.configured,
       name: account.name,
-      gatewayUrl: account.gatewayUrl,
-      apiBaseUrl: account.apiBaseUrl,
+      gatewayBaseUrl: account.gatewayBaseUrl,
       appId: account.appId,
       running: runtime?.running ?? false,
       lastStartAt: runtime?.lastStartAt ?? null,
@@ -358,7 +354,7 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
       const { monitorShareCrmProvider } = await import("./monitor.js");
       const account = resolveAccount(ctx.cfg, ctx.accountId);
       ctx.log?.info(
-        `starting sharecrm[${ctx.accountId}] (gateway: ${account.gatewayUrl || "not configured"})`,
+        `starting sharecrm[${ctx.accountId}] (gateway: ${account.gatewayBaseUrl || "not configured"})`,
       );
       return monitorShareCrmProvider({
         config: ctx.cfg,

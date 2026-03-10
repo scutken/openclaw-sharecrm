@@ -1,14 +1,15 @@
 /**
  * ShareCRM IM Gateway 的客户端
  *
- * 架构：WebSocket 下行 + REST API 上行
- * - WebSocket: 接收服务端推送的消息（connected, message, error）
+ * 架构：SSE 下行 + REST API 上行
+ * - SSE: 接收服务端推送的消息（connected, ping, message, error）
  * - REST API: 发送消息到服务端
  */
 
-import WebSocket from "ws";
+import https from "https";
+import http from "http";
 import type {
-  ShareCrmServerMessage,
+  ShareCrmSseEvent,
   ResolvedShareCrmAccount,
   AuthTokenResponse,
   SendMessageResponse,
@@ -20,20 +21,21 @@ const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000; // 提前 5 分钟刷新 Token
 export type ShareCrmClientOptions = {
   account: ResolvedShareCrmAccount;
   onConnected: (botId: string) => void;
-  onMessage: (data: ShareCrmServerMessage & { type: "message" }) => void;
+  onMessage: (data: ShareCrmSseEvent & { type: "message" }) => void;
   onDisconnected: (reason: string) => void;
   onError?: (error: Error) => void;
   log?: (...args: any[]) => void;
 };
 
 export class ShareCrmClient {
-  private ws: WebSocket | null = null;
+  private request: http.ClientRequest | null = null;
   private accessToken: string | null = null;
   private tokenExpiresAt: number = 0;
   private options: ShareCrmClientOptions;
   private shouldReconnect = true;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _connected = false;
+  private _connecting = false;
 
   constructor(options: ShareCrmClientOptions) {
     this.options = options;
@@ -45,9 +47,9 @@ export class ShareCrmClient {
 
   /** 获取 AccessToken */
   private async fetchAccessToken(): Promise<string> {
-    const { apiBaseUrl, appId, appSecret } = this.options.account;
+    const { gatewayBaseUrl, appId, appSecret } = this.options.account;
 
-    const response = await fetch(`${apiBaseUrl}/im-gateway/auth/token`, {
+    const response = await fetch(`${gatewayBaseUrl}/im-gateway/auth/token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ appId, appSecret }),
@@ -56,11 +58,10 @@ export class ShareCrmClient {
     const data: AuthTokenResponse = await response.json();
 
     if (data.code !== 0 || !data.data) {
-      throw new Error(data.message || "获取 Token 失败");
+      throw new Error(data.msg || "获取 Token 失败");
     }
 
     this.accessToken = data.data.accessToken;
-    // 提前 5 分钟刷新
     this.tokenExpiresAt = Date.now() + data.data.expiresIn * 1000 - TOKEN_REFRESH_BUFFER_MS;
 
     return this.accessToken;
@@ -74,66 +75,154 @@ export class ShareCrmClient {
     return this.fetchAccessToken();
   }
 
-  /** 构建 WebSocket URL */
-  private async buildUrl(): Promise<string> {
-    const token = await this.ensureToken();
-    const { gatewayUrl } = this.options.account;
-    return `${gatewayUrl}/im-gateway/bot?token=${token}`;
-  }
-
-  /** 连接到 Gateway */
+  /** 连接到 Gateway (使用原生 https 模块) */
   async connect(): Promise<void> {
-    if (this.ws) {
+    if (this.request || this._connecting) {
       return;
     }
+    this._connecting = true;
 
     const log = this.options.log ?? console.log;
 
     try {
-      const url = await this.buildUrl();
-      log(`sharecrm: 正在连接 ${url.replace(/\?token=.+$/, "?token=***")}`);
+      const token = await this.ensureToken();
+      const { gatewayBaseUrl } = this.options.account;
+      const urlStr = `${gatewayBaseUrl}/im-gateway/bot/events?token=${token}`;
+      const url = new URL(urlStr);
 
-      this.ws = new WebSocket(url);
+      log(`sharecrm: 正在连接 SSE ${urlStr.replace(/\?token=.+$/, "?token=***")}`);
 
-      this.ws.on("open", () => {
-        log("sharecrm: WebSocket 连接已建立");
-      });
+      const httpModule = url.protocol === "https:" ? https : http;
 
-      this.ws.on("message", (raw) => {
-        try {
-          const msg: ShareCrmServerMessage = JSON.parse(raw.toString());
-          this.handleMessage(msg);
-        } catch (err) {
-          log(`sharecrm: 消息解析失败: ${String(err)}`);
+      const reqOptions: https.RequestOptions = {
+        hostname: url.hostname,
+        port: url.port || (url.protocol === "https:" ? 443 : 80),
+        path: url.pathname + url.search,
+        method: "GET",
+        headers: {
+          "Accept": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+        },
+      };
+
+      this.request = httpModule.request(reqOptions, (res) => {
+        this._connecting = false;
+
+        if (res.statusCode !== 200) {
+          log(`sharecrm: SSE 连接失败, statusCode=${res.statusCode}`);
+          this.cleanupRequest();
+          this.scheduleReconnect();
+          return;
         }
+
+        log(`sharecrm: SSE 连接已建立, statusCode=${res.statusCode}`);
+
+        let buffer = "";
+
+        res.on("data", (chunk: Buffer) => {
+          buffer += chunk.toString();
+          buffer = this.parseSSEBuffer(buffer, (event, data) => {
+            this.handleParsedEvent(event, data);
+          });
+        });
+
+        res.on("end", () => {
+          log("sharecrm: SSE 连接已关闭");
+          const wasConnected = this._connected;
+          this._connected = false;
+          this.cleanupRequest();
+          if (wasConnected) {
+            this.options.onDisconnected("SSE connection closed");
+          }
+          this.scheduleReconnect();
+        });
+
+        res.on("error", (err) => {
+          log(`sharecrm: SSE 响应错误: ${err.message}`);
+          const wasConnected = this._connected;
+          this._connected = false;
+          this.cleanupRequest();
+          if (wasConnected) {
+            this.options.onDisconnected("SSE response error");
+          }
+          this.scheduleReconnect();
+        });
       });
 
-      this.ws.on("close", (code, reason) => {
-        this._connected = false;
-        const reasonStr = reason?.toString() || `code: ${code}`;
-        log(`sharecrm: WebSocket 已关闭: ${reasonStr}`);
-        this.ws = null;
-        this.options.onDisconnected(reasonStr);
+      this.request.on("error", (err) => {
+        this._connecting = false;
+        log(`sharecrm: SSE 请求错误: ${err.message}`);
+        this.cleanupRequest();
+        this.options.onError?.(err);
         this.scheduleReconnect();
       });
 
-      this.ws.on("error", (error) => {
-        log(`sharecrm: WebSocket 错误: ${String(error)}`);
-        this.options.onError?.(error);
+      this.request.on("timeout", () => {
+        this._connecting = false;
+        log("sharecrm: SSE 请求超时");
+        this.cleanupRequest();
+        this.scheduleReconnect();
       });
 
-      this.ws.on("ping", () => {
-        // ws 库默认自动响应服务端 ping
-      });
+      this.request.setTimeout(60000); // 60秒超时（服务端 ping 间隔 30s，留 2x 余量）
+      this.request.end();
+
     } catch (err) {
+      this._connecting = false;
       log(`sharecrm: 连接失败: ${String(err)}`);
       this.options.onError?.(err instanceof Error ? err : new Error(String(err)));
       this.scheduleReconnect();
     }
   }
 
-  /** 处理服务端消息 */
-  private handleMessage(msg: ShareCrmServerMessage): void {
+  /** 清理请求 */
+  private cleanupRequest(): void {
+    if (this.request) {
+      this.request.destroy();
+      this.request = null;
+    }
+  }
+
+  /** 解析 SSE 事件流，返回未处理的剩余 buffer */
+  private parseSSEBuffer(buffer: string, callback: (event: string, data: string) => void): string {
+    const blocks = buffer.split("\n\n");
+    const remaining = blocks.pop() ?? ""; // 最后一块可能不完整
+    for (const block of blocks) {
+      if (!block.trim()) continue;
+
+      let eventName = "message";
+      const dataLines: string[] = [];
+
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) {
+          eventName = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          dataLines.push(line.slice(5).trim());
+        }
+      }
+
+      if (dataLines.length > 0) {
+        callback(eventName, dataLines.join("\n"));
+      }
+    }
+    return remaining;
+  }
+
+  /** 处理解析后的事件 */
+  private handleParsedEvent(eventName: string, data: string): void {
+    const log = this.options.log ?? console.log;
+
+    try {
+      const msg: ShareCrmSseEvent = JSON.parse(data);
+      this.handleSseEvent(msg);
+    } catch (err) {
+      log(`sharecrm: ${eventName} 事件解析失败: ${String(err)}, data=${data}`);
+    }
+  }
+
+  /** 处理 SSE 事件 */
+  private handleSseEvent(msg: ShareCrmSseEvent): void {
     const log = this.options.log ?? console.log;
 
     switch (msg.type) {
@@ -144,12 +233,16 @@ export class ShareCrmClient {
         break;
 
       case "message":
-        this.options.onMessage(msg as ShareCrmServerMessage & { type: "message" });
+        this.options.onMessage(msg as ShareCrmSseEvent & { type: "message" });
         break;
 
       case "error":
         log(`sharecrm: 错误 [${msg.error.code}]: ${msg.error.message}`);
         this.options.onError?.(new Error(`[${msg.error.code}] ${msg.error.message}`));
+        break;
+
+      case "ping":
+        log("sharecrm: 收到心跳 ping");
         break;
     }
   }
@@ -158,9 +251,9 @@ export class ShareCrmClient {
   async sendMessage(chatId: string, text: string): Promise<{ messageId: string; chatId: string } | null> {
     try {
       const token = await this.ensureToken();
-      const { apiBaseUrl } = this.options.account;
+      const { gatewayBaseUrl } = this.options.account;
 
-      const response = await fetch(`${apiBaseUrl}/im-gateway/qixin/message/send`, {
+      const response = await fetch(`${gatewayBaseUrl}/im-gateway/qixin/message/send`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -179,7 +272,7 @@ export class ShareCrmClient {
       }
 
       const log = this.options.log ?? console.log;
-      log(`sharecrm: 发送消息失败: ${data.message || "未知错误"}`);
+      log(`sharecrm: 发送消息失败: ${data.msg || "未知错误"}`);
       return null;
     } catch (err) {
       const log = this.options.log ?? console.log;
@@ -211,10 +304,7 @@ export class ShareCrmClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
+    this.cleanupRequest();
     this._connected = false;
   }
 }

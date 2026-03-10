@@ -11,6 +11,7 @@ import {
   type WizardPrompter,
 } from "openclaw/plugin-sdk";
 import { resolveAccount } from "./accounts.js";
+import { DEFAULT_GATEWAY_BASE_URL } from "./accounts.js";
 import type { ResolvedShareCrmAccount, ShareCrmChannelConfig } from "./types.js";
 
 const CHANNEL_ID = "sharecrm";
@@ -29,8 +30,7 @@ function setShareCrmAccount(
 
   const merged: ShareCrmChannelConfig = {
     enabled: account.enabled ?? existing?.enabled ?? true,
-    gatewayUrl: account.gatewayUrl ?? existing?.gatewayUrl ?? "",
-    apiBaseUrl: account.apiBaseUrl ?? existing?.apiBaseUrl ?? "",
+    gatewayBaseUrl: account.gatewayBaseUrl ?? existing?.gatewayBaseUrl ?? DEFAULT_GATEWAY_BASE_URL,
     appId: account.appId ?? existing?.appId ?? "",
     appSecret: account.appSecret ?? existing?.appSecret ?? "",
     dmPolicy: account.dmPolicy ?? existing?.dmPolicy ?? "open",
@@ -53,12 +53,11 @@ async function noteShareCrmSetupHelp(prompter: WizardPrompter): Promise<void> {
   await prompter.note(
     [
       "ShareCRM 需要配置 IM Gateway 连接信息。",
-      "1. 获取 Gateway WebSocket 地址 (ws://... 或 wss://...)",
-      "2. 获取 Gateway REST API 地址 (http://... 或 https://...)",
-      "3. 获取应用 appId 和 appSecret",
+      "1. 获取 Gateway 基地址 (默认: https://open.fxiaoke.com)",
+      "2. 获取应用 appId 和 appSecret",
       "",
       "环境变量支持:",
-      "  SHARECRM_GATEWAY_URL, SHARECRM_API_BASE_URL",
+      "  SHARECRM_GATEWAY_BASE_URL",
       "  SHARECRM_APP_ID, SHARECRM_APP_SECRET",
       `文档: ${formatDocsLink("/channels/sharecrm", "channels/sharecrm")}`,
     ].join("\n"),
@@ -67,43 +66,18 @@ async function noteShareCrmSetupHelp(prompter: WizardPrompter): Promise<void> {
 }
 
 /**
- * Prompt for Gateway WebSocket URL
+ * Prompt for Gateway Base URL
  */
-async function promptGatewayUrl(
+async function promptGatewayBaseUrl(
   prompter: WizardPrompter,
   account: ResolvedShareCrmAccount | null,
 ): Promise<string> {
-  const envValue = process.env.SHARECRM_GATEWAY_URL?.trim();
+  const envValue = process.env.SHARECRM_GATEWAY_BASE_URL?.trim();
   return String(
     await prompter.text({
-      message: "Gateway WebSocket 地址",
-      initialValue: account?.gatewayUrl || envValue || "",
-      placeholder: "ws://localhost:8099",
-      validate: (value) => {
-        const raw = String(value ?? "").trim();
-        if (!raw) return "必填";
-        if (!raw.startsWith("ws://") && !raw.startsWith("wss://")) {
-          return "地址应以 ws:// 或 wss:// 开头";
-        }
-        return undefined;
-      },
-    }),
-  ).trim();
-}
-
-/**
- * Prompt for API Base URL
- */
-async function promptApiBaseUrl(
-  prompter: WizardPrompter,
-  account: ResolvedShareCrmAccount | null,
-): Promise<string> {
-  const envValue = process.env.SHARECRM_API_BASE_URL?.trim();
-  return String(
-    await prompter.text({
-      message: "Gateway REST API 地址",
-      initialValue: account?.apiBaseUrl || envValue || "",
-      placeholder: "http://localhost:8099",
+      message: "Gateway 基地址",
+      initialValue: account?.gatewayBaseUrl || envValue || DEFAULT_GATEWAY_BASE_URL,
+      placeholder: DEFAULT_GATEWAY_BASE_URL,
       validate: (value) => {
         const raw = String(value ?? "").trim();
         if (!raw) return "必填";
@@ -168,7 +142,7 @@ async function promptAppSecret(
 function isAccountConfigured(account: ResolvedShareCrmAccount | null): boolean {
   if (!account) return false;
   return Boolean(
-    account.gatewayUrl && account.apiBaseUrl && account.appId && account.appSecret,
+    account.gatewayBaseUrl && account.appId && account.appSecret,
   );
 }
 
@@ -194,7 +168,9 @@ const dmPolicy: ChannelOnboardingDmPolicy = {
     const entry = await prompter.text({
       message: "允许的用户 ID（每行一个，用于安全限制）",
       placeholder: "user-001",
-      initialValue: existingAllowFrom[0] ? String(existingAllowFrom[0]) : undefined,
+      initialValue: existingAllowFrom.length > 0
+        ? existingAllowFrom.map(String).join("\n")
+        : undefined,
     });
 
     const allowFrom = String(entry ?? "")
@@ -220,7 +196,7 @@ export const shareCrmOnboardingAdapter: ChannelOnboardingAdapter = {
       channel: CHANNEL_ID,
       configured,
       statusLines: [
-        `ShareCRM: ${configured ? "已配置" : "需要 gatewayUrl, apiBaseUrl, appId, appSecret"}`,
+        `ShareCRM: ${configured ? "已配置" : "需要 appId, appSecret"}`,
       ],
       selectionHint: configured ? "已配置" : "需要配置",
     };
@@ -234,14 +210,12 @@ export const shareCrmOnboardingAdapter: ChannelOnboardingAdapter = {
     }
 
     // Prompt for credentials
-    const gatewayUrl = await promptGatewayUrl(prompter, account);
-    const apiBaseUrl = await promptApiBaseUrl(prompter, account);
+    const gatewayBaseUrl = await promptGatewayBaseUrl(prompter, account);
     const appId = await promptAppId(prompter, account);
     const appSecret = await promptAppSecret(prompter, account);
 
     let cfgWithAccount = setShareCrmAccount(cfg, {
-      gatewayUrl,
-      apiBaseUrl,
+      gatewayBaseUrl,
       appId,
       appSecret,
       enabled: true,
