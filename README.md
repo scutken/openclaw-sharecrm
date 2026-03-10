@@ -83,7 +83,8 @@ openclaw configure --section channels
   "gatewayBaseUrl": "https://open.fxiaoke.com",
   "appId": "bot-qqq111",
   "appSecret": "__OPENCLAW_REDACTED__",
-  "dmPolicy": "pairing",
+  "dmPolicy": "open",
+  "allowFrom": [],
   "enabled": true
 }
 ```
