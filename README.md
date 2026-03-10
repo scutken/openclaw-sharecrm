@@ -27,6 +27,12 @@
 
 ### 2. 安装插件
 
+如果原有内测安装的插件，需要先卸载
+
+```shell
+openclaw plugins uninstall sharecrm
+```
+
 **方式一：通过 npm 安装（推荐）**
 
 ```shell
