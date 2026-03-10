@@ -1,8 +1,12 @@
 {
   "name": "@scut_ken/openclaw-sharecrm",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "ShareCRM IM Gateway channel plugin for OpenClaw",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/scutken/openclaw-sharecrm"
+  },
   "scripts": {
     "build": "tsc && npm run bundle",
     "bundle": "esbuild dist/index.js --bundle --platform=node --format=esm --outfile=dist/sharecrm.js --external:openclaw --external:openclaw/*",
@@ -43,7 +47,9 @@
     }
   },
   "devDependencies": {
+    "@types/node": "^25.4.0",
     "esbuild": "^0.27.3",
+    "openclaw": "^2026.3.8",
     "typescript": "^5.9.3"
   }
 }

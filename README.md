@@ -33,7 +33,31 @@
 openclaw plugins install @scut_ken/openclaw-sharecrm
 ```
 
-### 3. 配置
+**方式二：从 GitHub Release 下载安装**
+
+1. 前往 [Releases](https://github.com/scutken/openclaw-sharecrm/releases) 页面
+2. 下载最新版本的 `openclaw-sharecrm-vX.X.X.zip`
+3. 解压到 OpenClaw 的 extensions 目录：
+
+```shell
+unzip openclaw-sharecrm-vX.X.X.zip -d /path/to/openclaw/extensions/sharecrm
+```
+
+### 3. 更新插件
+
+**npm 方式安装的更新：**
+
+```shell
+openclaw plugins update @scut_ken/openclaw-sharecrm
+```
+
+**GitHub Release 方式安装的更新：**
+
+1. 前往 [Releases](https://github.com/scutken/openclaw-sharecrm/releases) 页面
+2. 下载最新版本
+3. 删除旧版本目录后重新解压
+
+### 4. 配置
 
 CLI 交互式配置：
 
@@ -57,3 +81,13 @@ openclaw configure --section channels
   "enabled": true
 }
 ```
+
+## 发布流程
+
+维护者发布新版本：
+
+1. 更新 `package.json` 中的版本号
+2. 创建并推送 tag：`git tag v1.0.3 && git push origin v1.0.3`
+3. GitHub Actions 自动构建并发布到 npm 和 GitHub Releases
+
+> **注意**：需要在 GitHub 仓库设置中添加 `NPM_TOKEN` secret（从 npm 获取 automation token）
