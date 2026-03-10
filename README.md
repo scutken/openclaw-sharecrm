@@ -27,39 +27,11 @@
 
 ### 2. 安装插件
 
-**方式一：使用预构建包（推荐）**
-
-下载 `openclaw-sharecrm-v1.0.0.zip` 并解压到 OpenClaw 的 extensions 目录：
+**方式一：通过 npm 安装（推荐）**
 
 ```shell
-# 解压到 openclaw extensions 目录
-unzip openclaw-sharecrm-v1.0.0.zip -d /path/to/openclaw/extensions/sharecrm
+openclaw plugins install @scut_ken/openclaw-sharecrm
 ```
-
-**方式二：本地开发安装**
-
-```shell
-# 克隆项目到 OpenClaw 机器
-git clone https://github.com/scutken/openclaw-sharecrm.git
-cd openclaw-sharecrm
-
-# 仅安装构建依赖，避免拉取 peer 依赖
-npm ci --omit=peer --omit=optional
-
-# 构建插件
-npm run build
-
-# 安装插件，链接方式
-openclaw plugins install -l .
-```
-
-如果需要产出可分发 zip：
-
-```shell
-npm run build:package
-```
-
-命令会在当前目录产出 `openclaw-sharecrm-v<version>.zip`，并覆盖同名文件。
 
 ### 3. 配置
 

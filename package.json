@@ -1,6 +1,6 @@
 {
-  "name": "@openclaw/sharecrm",
-  "version": "1.0.1",
+  "name": "@scut_ken/openclaw-sharecrm",
+  "version": "1.0.2",
   "description": "ShareCRM IM Gateway channel plugin for OpenClaw",
   "type": "module",
   "scripts": {

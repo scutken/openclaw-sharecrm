@@ -242,7 +242,7 @@ export class ShareCrmClient {
         break;
 
       case "ping":
-        log("sharecrm: 收到心跳 ping");
+        console.debug("sharecrm: 收到心跳 ping");
         break;
     }
   }
