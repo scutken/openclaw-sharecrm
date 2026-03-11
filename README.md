@@ -30,7 +30,8 @@
 如果原有内测安装的插件，需要先卸载
 
 ```shell
-openclaw plugins uninstall sharecrm
+# 删除插件目录（卸载命令可能无法正确移除内测版本）
+rm -rf ~/.openclaw/extensions/sharecrm
 ```
 
 **方式一：通过 npm 安装（推荐）**
