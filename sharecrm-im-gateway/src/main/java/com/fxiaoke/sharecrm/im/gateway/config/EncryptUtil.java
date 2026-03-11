@@ -32,7 +32,7 @@ public class EncryptUtil {
      * 加密密钥，实际生产环境应从安全配置中获取
      * 32字节 = 256位 AES密钥
      */
-    private static final String SECRET_KEY = "SharecrmImGateway@2026!Encrypt";
+    private static final String SECRET_KEY = "SharecrmImGateway@2026!!Encrypt!";
 
     /**
      * 加密字符串
