@@ -30,7 +30,7 @@
   ],
   "openclaw": {
     "extensions": [
-      "./sharecrm.js"
+      "dist/sharecrm.js"
     ],
     "channel": {
       "id": "sharecrm",

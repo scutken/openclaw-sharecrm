@@ -84,7 +84,8 @@ async function main() {
 
   for (const relativeFile of requiredFiles) {
     const src = path.join(projectDir, relativeFile);
-    const dest = path.join(packageDir, path.basename(relativeFile));
+    const dest = path.join(packageDir, relativeFile);
+    await mkdir(path.dirname(dest), { recursive: true });
     await copyFile(src, dest);
   }
 
