@@ -59,8 +59,8 @@ public class EncryptUtil {
             
             return ENCRYPTED_PREFIX + Base64.getEncoder().encodeToString(combined);
         } catch (Exception e) {
-            log.error("加密失败", e);
-            throw new RuntimeException("加密失败", e);
+            log.error("encrypt failed", e);
+            throw new RuntimeException("encrypt failed", e);
         }
     }
 
@@ -98,8 +98,8 @@ public class EncryptUtil {
             
             return new String(decrypted, StandardCharsets.UTF_8);
         } catch (Exception e) {
-            log.error("解密失败", e);
-            throw new RuntimeException("解密失败", e);
+            log.error("decrypt failed", e);
+            throw new RuntimeException("decrypt failed", e);
         }
     }
 
