@@ -46,10 +46,28 @@ public class AccountProperties {
         }
         try {
             ObjectMapper mapper = new ObjectMapper();
-            Map<String, List<Account>> root = mapper.readValue(json, new TypeReference<Map<String, List<Account>>>() {});
-            List<Account> accountList = root.get("accounts");
-            if (accountList != null) {
-                newAccounts.addAll(accountList);
+            Map<String, Object> root = mapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+            Object accountsValue = root.get("accounts");
+            if (accountsValue == null) {
+                return newAccounts;
+            }
+            
+            // 兼容两种格式：加密字符串 或 原始数组
+            if (accountsValue instanceof String) {
+                // 新格式：accounts 值是加密字符串
+                String encryptedAccounts = (String) accountsValue;
+                String decryptedAccounts = EncryptUtil.decrypt(encryptedAccounts);
+                List<Account> accountList = mapper.readValue(decryptedAccounts, new TypeReference<List<Account>>() {});
+                if (accountList != null) {
+                    newAccounts.addAll(accountList);
+                }
+            } else if (accountsValue instanceof List) {
+                // 旧格式：accounts 值是数组（兼容旧数据）
+                @SuppressWarnings("unchecked")
+                List<Account> accountList = mapper.convertValue(accountsValue, new TypeReference<List<Account>>() {});
+                if (accountList != null) {
+                    newAccounts.addAll(accountList);
+                }
             }
         } catch (Exception e) {
             throw new RuntimeException("Failed to parse accounts config", e);

@@ -135,7 +135,7 @@ public class QixinMessageController {
     }
 
     /**
-     * 下行消息请求
+     * 上行消息请求
      */
     @Data
     public static class InboundRequest {
