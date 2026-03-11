@@ -56,8 +56,11 @@ public class ConfigAdminDao {
         }, () -> accounts.add(account));
         try {
             ObjectMapper mapper = new ObjectMapper();
+            // 只加密 accounts 数组
+            String accountsJson = mapper.writeValueAsString(accounts);
+            String encryptedAccounts = EncryptUtil.encrypt(accountsJson);
             Map<String, Object> root = new LinkedHashMap<>();
-            root.put("accounts", accounts);
+            root.put("accounts", encryptedAccounts);
             String jsonContent = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(root);
             iConfigAdmin.save(erpdssConfigToken, globalProfile, openclawAccountConfig, jsonContent);
         } catch (Exception e) {
@@ -76,8 +79,11 @@ public class ConfigAdminDao {
 
         try {
             ObjectMapper mapper = new ObjectMapper();
+            // 只加密 accounts 数组
+            String accountsJson = mapper.writeValueAsString(accounts);
+            String encryptedAccounts = EncryptUtil.encrypt(accountsJson);
             Map<String, Object> root = new LinkedHashMap<>();
-            root.put("accounts", accounts);
+            root.put("accounts", encryptedAccounts);
             String jsonContent = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(root);
             iConfigAdmin.save(erpdssConfigToken, globalProfile, openclawAccountConfig, jsonContent);
         } catch (Exception e) {
@@ -96,7 +102,6 @@ public class ConfigAdminDao {
         if (config == null) {
             throw new RuntimeException("not found config");
         }
-        String s = new String(config.getBytes(StandardCharsets.UTF_8));
-        return s;
+        return new String(config.getBytes(StandardCharsets.UTF_8));
     }
 }
