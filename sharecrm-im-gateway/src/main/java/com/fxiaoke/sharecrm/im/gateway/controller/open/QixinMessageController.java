@@ -9,7 +9,7 @@ import com.fxiaoke.sharecrm.im.gateway.qixin.QixinClient;
 import com.fxiaoke.sharecrm.im.gateway.qixin.QixinSessionId;
 import com.fxiaoke.sharecrm.im.gateway.service.AuthException;
 import com.fxiaoke.sharecrm.im.gateway.service.AuthService;
-import com.fxiaoke.sharecrm.im.gateway.websocket.SessionManager;
+import com.fxiaoke.sharecrm.im.gateway.sse.SseSessionManager;
 import javax.servlet.http.HttpServletRequest;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -34,7 +34,7 @@ import java.util.Map;
 public class QixinMessageController {
 
     private final AuthService authService;
-    private final SessionManager sessionManager;
+    private final SseSessionManager sessionManager;
     private final QixinClient qixinClient;
 
     /**
@@ -85,8 +85,8 @@ public class QixinMessageController {
         String appId = account.getAppId();
         String botFullId = account.getBotFullId();
 
-        // 检查 Bot 是否在线（SSE 或 WebSocket）
-        if (!sessionManager.isBotOnline(appId)) {
+        // 检查 Bot 是否在线（SSE）
+        if (!sessionManager.isOnline(appId)) {
             log.warn("Bot offline: appId={}", appId);
             return Result.error(ErrorCode.BOT_NOT_CONNECTED);
         }
@@ -123,9 +123,6 @@ public class QixinMessageController {
             log.warn("[TO Qixin] Send failed: appId={}, sessionId={}, error={}",
                     appId, qixinSessionId.getSessionId(), e.getMessage(), e);
         }
-
-        // 广播消息到模拟器（Bot 回复，无论企信发送成功与否）
-        sessionManager.broadcastBotMessageToSimulators(appId, qixinSessionId.getSessionId(), messageId, request.getText());
 
         log.info("[TO Qixin] appId={}, env={}, ea={}, sessionId={}, text={}, messageId={}",
                 appId, qixinSessionId.getEnv(), ea,

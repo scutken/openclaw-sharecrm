@@ -54,7 +54,7 @@ public class AuthController {
                     "tokenType", tokenInfo.getTokenType()
             ));
         } else {
-            log.warn("Token generation failed: appId={}, reason={}", request.getAppId(), result.getMessage());
+            log.debug("Token generation failed: appId={}, reason={}", request.getAppId(), result.getMessage());
             if ("Account disabled".equals(result.getMessage())) {
                 return Result.error(ErrorCode.ACCOUNT_DISABLED);
             }

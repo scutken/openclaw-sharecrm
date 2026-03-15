@@ -4,7 +4,7 @@ import com.fxiaoke.sharecrm.im.gateway.common.ErrorCode;
 import com.fxiaoke.sharecrm.im.gateway.common.Result;
 import com.fxiaoke.sharecrm.im.gateway.qixin.QixinMessage;
 import com.fxiaoke.sharecrm.im.gateway.service.AccountService;
-import com.fxiaoke.sharecrm.im.gateway.websocket.SessionManager;
+import com.fxiaoke.sharecrm.im.gateway.sse.SseSessionManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -17,7 +17,7 @@ import java.util.UUID;
 /**
  * 发送消息到 Bot
  * <p>
- * 消息流向：企信/模拟器 → 网关 → Bot
+ * 消息流向：企信 → 网关 → Bot
  * 路径：/bot/message/send
  */
 @Slf4j
@@ -26,13 +26,13 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class BotMessageController {
 
-    private final SessionManager sessionManager;
+    private final SseSessionManager sessionManager;
     private final AccountService accountService;
 
     /**
      * 发送消息给 Bot
      * <p>
-     * 企信/模拟器发送的用户消息，转发给对应的 Bot
+     * 企信发送的用户消息，转发给对应的 Bot
      */
     @PostMapping("/send")
     public Result<Void> send(@RequestBody QixinMessage.InboundMessage message) {
@@ -61,8 +61,8 @@ public class BotMessageController {
         var account = accountOpt.get();
         String appId = account.getAppId();
 
-        // 检查 Bot 是否在线（SSE 或 WebSocket）
-        if (!sessionManager.isBotOnline(appId)) {
+        // 检查 Bot 是否在线（SSE）
+        if (!sessionManager.isOnline(appId)) {
             log.warn("Bot offline: appId={}, botFullId={}", appId, message.getBotFullId());
             return Result.error(ErrorCode.BOT_NOT_CONNECTED);
         }
@@ -98,16 +98,6 @@ public class BotMessageController {
 
         log.info("[Message forwarded] appId={}, chatId={}, messageId={}",
                 appId, encodedChatId, internalMessageId);
-
-        // 广播到模拟器（使用原始 sessionId 以便模拟器匹配）
-        sessionManager.broadcastUserMessageToSimulators(
-                appId,
-                message.getSessionId(),
-                internalMessageId,
-                text,
-                message.getSenderFullId(),
-                message.extractUserName()
-        );
 
         return Result.success();
     }

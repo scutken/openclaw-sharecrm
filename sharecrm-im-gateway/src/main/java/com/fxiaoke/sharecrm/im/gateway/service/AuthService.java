@@ -121,7 +121,7 @@ public class AuthService {
                     return AuthResult.success(account);
                 })
                 .orElseGet(() -> {
-                    log.warn("Authentication failed: appId={}, reason=Invalid appId or appSecret", appId);
+                    log.debug("Authentication failed: appId={}, reason=Invalid appId or appSecret", appId);
                     return AuthResult.failure("Invalid appId or appSecret");
                 });
     }

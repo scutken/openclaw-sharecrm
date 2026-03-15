@@ -108,41 +108,6 @@ public class SseSessionManager {
     }
 
     /**
-     * 向 Bot 发送消息
-     */
-    public void sendMessageToBot(String appId, String chatId, String messageId, String text,
-                                  String userId, String userName) {
-        getBotEmitter(appId).ifPresent(emitter -> {
-            try {
-                Map<String, Object> data = new LinkedHashMap<>();
-                data.put("message_id", messageId);
-                data.put("chat_id", chatId);
-                data.put("chat_type", "direct");
-                data.put("from", Map.of(
-                        "id", userId,
-                        "name", userName
-                ));
-                data.put("text", text);
-                data.put("date", System.currentTimeMillis() / 1000);
-
-                String json = objectMapper.writeValueAsString(Map.of(
-                        "type", "message",
-                        "data", data
-                ));
-
-                emitter.send(SseEmitter.event()
-                        .name("message")
-                        .data(json));
-
-                log.debug("Message sent to Bot via SSE: appId={}, chatId={}", appId, chatId);
-            } catch (IOException e) {
-                log.error("Failed to send message to Bot via SSE: appId={}, error={}", appId, e.getMessage());
-                unregisterBot(appId);
-            }
-        });
-    }
-
-    /**
      * 向 Bot 发送企信格式消息
      */
     public void sendQixinMessageToBot(String appId, String chatId, String messageId, String text,
@@ -197,7 +162,13 @@ public class SseSessionManager {
     @Scheduled(fixedRate = 30000) // 每 30 秒
     public void sendHeartbeat() {
         long now = System.currentTimeMillis();
-        botEmitters.forEach((appId, emitter) -> {
+        // 复制一份 key 列表，避免并发修改问题
+        List<String> appIds = new ArrayList<>(botEmitters.keySet());
+        for (String appId : appIds) {
+            SseEmitter emitter = botEmitters.get(appId);
+            if (emitter == null) {
+                continue; // 连接已被移除，跳过
+            }
             try {
                 emitter.send(SseEmitter.event()
                         .name("ping")
@@ -206,10 +177,15 @@ public class SseSessionManager {
                                 "time", now / 1000
                         )));
             } catch (IOException e) {
-                log.warn("Failed to send heartbeat to appId={}, removing", appId);
+                // 忽略 Broken pipe 等连接断开异常，避免打印 ERROR 日志
+                // 这类异常说明客户端已断开，onError 回调会处理清理
+                log.debug("Heartbeat failed (connection closed): appId={}, error={}", appId, e.getMessage());
+                unregisterBot(appId);
+            } catch (Exception e) {
+                log.warn("Failed to send heartbeat to appId={}, error={}", appId, e.getMessage());
                 unregisterBot(appId);
             }
-        });
+        }
     }
 
     private String normalizeChatType(String chatType) {
