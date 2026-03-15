@@ -16,12 +16,10 @@ import org.springframework.stereotype.Component;
 @Component
 public class QixinClient {
 
-    private final boolean enabled;
     private final OpenMessageService openMessageService;
 
     @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
-    public QixinClient(@Value("${qixin.api.enabled:false}") boolean enabled, OpenMessageService openMessageService) {
-        this.enabled = enabled;
+    public QixinClient(OpenMessageService openMessageService) {
         this.openMessageService = openMessageService;
     }
 
@@ -32,13 +30,7 @@ public class QixinClient {
      * @return 发送结果
      */
     public SendMessageResult sendMessage(SendOpenAgentMessageArg arg) {
-        log.info("[Qixin send{}] arg={}", enabled ? "" : "-mock", arg);
-        
-        if (enabled) {
-            return openMessageService.sendOpenAgentMessage(arg);
-        }
-        
-        // 模拟模式
-        return new SendMessageResult();
+        log.info("[Qixin send] arg={}", arg);
+        return openMessageService.sendOpenAgentMessage(arg);
     }
 }

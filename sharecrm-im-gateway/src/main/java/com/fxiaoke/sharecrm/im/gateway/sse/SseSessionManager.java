@@ -212,7 +212,7 @@ public class SseSessionManager {
      *   }
      * }
      */
-    public void sendQixinMessageToBot(String appId, String chatId, String messageId, String text,
+    public void sendQixinMessageToBot(String appId, String chatId, String text,
                                        String userId, String userName, String chatType, QixinMessage.InboundMessage qixinMessage) {
         getBotEmitter(appId).ifPresent(emitter -> {
             try {
@@ -226,8 +226,7 @@ public class SseSessionManager {
                 Map<String, Object> data = new LinkedHashMap<>();
 
                 // message_id: 统一使用企信真实ID
-                data.put("message_id", qixinMessageId != null
-                        ? String.valueOf(qixinMessageId) : messageId);
+                data.put("message_id",  String.valueOf(qixinMessageId));
 
                 data.put("chat_id", chatId);
                 data.put("chat_type", normalizeChatType(chatType));

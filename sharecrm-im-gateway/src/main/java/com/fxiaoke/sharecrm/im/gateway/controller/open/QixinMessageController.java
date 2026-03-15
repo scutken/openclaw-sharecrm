@@ -1,5 +1,6 @@
 package com.fxiaoke.sharecrm.im.gateway.controller.open;
 
+import com.facishare.qixin.api.model.message.result.SendMessageResult;
 import com.facishare.qixin.api.model.open.arg.SendOpenAgentMessageArg;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fxiaoke.sharecrm.im.gateway.common.ErrorCode;
@@ -10,7 +11,6 @@ import com.fxiaoke.sharecrm.im.gateway.qixin.QixinSessionId;
 import com.fxiaoke.sharecrm.im.gateway.service.AuthException;
 import com.fxiaoke.sharecrm.im.gateway.service.AuthService;
 import com.fxiaoke.sharecrm.im.gateway.sse.SseSessionManager;
-import javax.servlet.http.HttpServletRequest;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,8 +19,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import javax.servlet.http.HttpServletRequest;
 import java.util.Locale;
 import java.util.Map;
+
+import static com.fxiaoke.sharecrm.im.gateway.common.ErrorCode.INTERNAL_ERROR;
 
 /**
  * 企信消息发送接口（外部接口）
@@ -113,22 +116,20 @@ public class QixinMessageController {
         if (request.getReplyMessageId() != null) {
             arg.setReplyMessageId(request.getReplyMessageId());
         }
-
-        String messageId = "msg-" + System.currentTimeMillis();
-
         // 发送消息给企信
         try {
-            qixinClient.sendMessage(arg);
+            SendMessageResult sendMessageResult = qixinClient.sendMessage(arg);
+            String messageId = String.valueOf(sendMessageResult.getMessageItem().getMessageId());
+            log.info("[TO Qixin] appId={}, env={}, ea={}, sessionId={}, text={}, messageId={}",
+                    appId, qixinSessionId.getEnv(), ea,
+                    qixinSessionId.getSessionId(), request.getText(), messageId);
+            return Result.success(Map.of("message_id", messageId));
         } catch (Exception e) {
             log.warn("[TO Qixin] Send failed: appId={}, sessionId={}, error={}",
                     appId, qixinSessionId.getSessionId(), e.getMessage(), e);
+            return Result.error(INTERNAL_ERROR, "Send Message To Qixin failed.");
         }
 
-        log.info("[TO Qixin] appId={}, env={}, ea={}, sessionId={}, text={}, messageId={}",
-                appId, qixinSessionId.getEnv(), ea,
-                qixinSessionId.getSessionId(), request.getText(), messageId);
-
-        return Result.success(Map.of("message_id", messageId));
     }
 
     /**

@@ -67,14 +67,10 @@ public class BotMessageController {
             return Result.error(ErrorCode.BOT_NOT_CONNECTED);
         }
 
-        String internalMessageId = "msg-" + UUID.randomUUID().toString().substring(0, 8);
         String encodedChatId = message.encodeChatId();
 
         if (message.getMessageType() == null) {
             message.setMessageType("T");
-        }
-        if (message.getChatType() == null || message.getChatType().isBlank()) {
-            message.setChatType("direct");
         }
         if (message.getMessageTimestamp() == null) {
             message.setMessageTimestamp(System.currentTimeMillis());
@@ -88,16 +84,15 @@ public class BotMessageController {
         sessionManager.sendQixinMessageToBot(
                 appId,
                 encodedChatId,
-                internalMessageId,
                 text,
                 message.getSenderFullId(),
                 message.extractUserName(),
-                message.getChatType(),
+                "direct", //目前固定是私聊
                 message
         );
 
         log.info("[Message forwarded] appId={}, chatId={}, messageId={}",
-                appId, encodedChatId, internalMessageId);
+                appId, encodedChatId, message.getMessageId());
 
         return Result.success();
     }
