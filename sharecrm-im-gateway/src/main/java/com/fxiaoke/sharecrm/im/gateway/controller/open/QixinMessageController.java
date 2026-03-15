@@ -127,7 +127,7 @@ public class QixinMessageController {
         } catch (Exception e) {
             log.warn("[TO Qixin] Send failed: appId={}, sessionId={}, error={}",
                     appId, qixinSessionId.getSessionId(), e.getMessage(), e);
-            return Result.success(SendMessageResponse.fail(e.getMessage()));
+            return Result.error(INTERNAL_ERROR, "Send Message To Qixin failed.");
         }
 
     }

@@ -10,25 +10,15 @@ public class SendMessageResponse {
     @JsonProperty("message_id")
     private String messageId;
 
-    private boolean success;
-
-    private String error;
-
     public SendMessageResponse() {
     }
 
-    public SendMessageResponse(String messageId, boolean success, String error) {
+    public SendMessageResponse(String messageId) {
         this.messageId = messageId;
-        this.success = success;
-        this.error = error;
     }
 
     public static SendMessageResponse ok(String messageId) {
-        return new SendMessageResponse(messageId, true, null);
-    }
-
-    public static SendMessageResponse fail(String error) {
-        return new SendMessageResponse(null, false, error);
+        return new SendMessageResponse(messageId);
     }
 
     public String getMessageId() {
@@ -37,21 +27,5 @@ public class SendMessageResponse {
 
     public void setMessageId(String messageId) {
         this.messageId = messageId;
-    }
-
-    public boolean isSuccess() {
-        return success;
-    }
-
-    public void setSuccess(boolean success) {
-        this.success = success;
-    }
-
-    public String getError() {
-        return error;
-    }
-
-    public void setError(String error) {
-        this.error = error;
     }
 }
