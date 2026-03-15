@@ -34,6 +34,17 @@ public class SseSessionManager {
     private final Map<String, SseEmitter> botEmitters = new ConcurrentHashMap<>();
 
     /**
+     * Bot 客户端版本 (appId -> version)
+     * 用于决定消息格式
+     */
+    private final Map<String, String> botVersions = new ConcurrentHashMap<>();
+
+    /**
+     * 最低支持新协议格式的版本（v1.2.0）
+     */
+    private static final String MIN_VERSION_FOR_NEW_PROTOCOL = "1.2.0";
+
+    /**
      * 注册 Bot SSE 连接
      *
      * @param appId   应用ID
@@ -41,8 +52,24 @@ public class SseSessionManager {
      * @return 是否成功注册（如果返回 false 表示新连接替换了旧连接）
      */
     public boolean registerBot(String appId, SseEmitter emitter) {
+        return registerBot(appId, emitter, "v1.0.0");
+    }
+
+    /**
+     * 注册 Bot SSE 连接（带版本）
+     *
+     * @param appId   应用ID
+     * @param emitter SSE 发射器
+     * @param version 客户端版本
+     * @return 是否成功注册（如果返回 false 表示新连接替换了旧连接）
+     */
+    public boolean registerBot(String appId, SseEmitter emitter, String version) {
         SseEmitter existing = botEmitters.put(appId, emitter);
         boolean replaced = existing != null;
+
+        // 存储客户端版本
+        String normalizedVersion = version != null ? version : "v1.0.0";
+        botVersions.put(appId, normalizedVersion);
 
         if (replaced) {
             log.warn("Replacing existing Bot SSE connection: appId={}", appId);
@@ -53,19 +80,22 @@ public class SseSessionManager {
         emitter.onCompletion(() -> {
             log.info("Bot SSE connection completed: appId={}", appId);
             botEmitters.remove(appId, emitter);
+            botVersions.remove(appId);
         });
 
         emitter.onTimeout(() -> {
             log.warn("Bot SSE connection timeout: appId={}", appId);
             botEmitters.remove(appId, emitter);
+            botVersions.remove(appId);
         });
 
         emitter.onError((e) -> {
             log.error("Bot SSE connection error: appId={}, error={}", appId, e.getMessage());
             botEmitters.remove(appId, emitter);
+            botVersions.remove(appId);
         });
 
-        log.info("Bot SSE session registered: appId={}", appId);
+        log.info("Bot SSE session registered: appId={}, version={}", appId, normalizedVersion);
         return !replaced;
     }
 
@@ -101,6 +131,54 @@ public class SseSessionManager {
     }
 
     /**
+     * 检查客户端版本是否支持新协议格式 (>= v1.2.0)
+     */
+    private boolean isNewProtocol(String appId) {
+        String version = botVersions.get(appId);
+        if (version == null) {
+            return false; // 默认旧协议
+        }
+        return isVersionGreaterOrEqual(version, MIN_VERSION_FOR_NEW_PROTOCOL);
+    }
+
+    /**
+     * 比较版本号，判断 currentVersion >= minVersion
+     */
+    private boolean isVersionGreaterOrEqual(String currentVersion, String minVersion) {
+        try {
+            String current = currentVersion.replaceFirst("^v", "");
+            String min = minVersion.replaceFirst("^v", "");
+
+            String[] currentParts = current.split("\\.");
+            String[] minParts = min.split("\\.");
+
+            int maxLen = Math.max(currentParts.length, minParts.length);
+
+            for (int i = 0; i < maxLen; i++) {
+                int currentPart = i < currentParts.length ? parseIntSafe(currentParts[i]) : 0;
+                int minPart = i < minParts.length ? parseIntSafe(minParts[i]) : 0;
+
+                if (currentPart > minPart) {
+                    return true;
+                } else if (currentPart < minPart) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private int parseIntSafe(String s) {
+        try {
+            return Integer.parseInt(s.replaceAll("[^0-9].*", ""));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /**
      * 获取所有在线 Bot 的 appId 列表
      */
     public List<String> getBotAppIds() {
@@ -109,46 +187,100 @@ public class SseSessionManager {
 
     /**
      * 向 Bot 发送企信格式消息
+     *
+     * 根据客户端版本决定消息格式：
+     * - v1.0: 原有格式，message_id 使用内部生成
+     * - v1.2+: 新格式，message_id 使用企信真实ID，添加 message 对象
      */
     public void sendQixinMessageToBot(String appId, String chatId, String messageId, String text,
                                        String userId, String userName, String chatType, QixinMessage.InboundMessage qixinMessage) {
         getBotEmitter(appId).ifPresent(emitter -> {
             try {
+                // 根据客户端版本决定消息格式
+                boolean useNewProtocol = isNewProtocol(appId);
+
                 Map<String, Object> data = new LinkedHashMap<>();
-                data.put("message_id", messageId);
+
+                // v1.2+: 使用企信真实 messageId，v1.0: 使用内部生成的 messageId
+                Long qixinMessageId = qixinMessage.getMessageId();
+                if (useNewProtocol && qixinMessageId != null) {
+                    data.put("message_id", String.valueOf(qixinMessageId));
+                } else {
+                    data.put("message_id", messageId);
+                }
+
                 data.put("chat_id", chatId);
                 data.put("chat_type", normalizeChatType(chatType));
                 data.put("from", Map.of(
                         "id", userId,
                         "name", userName
                 ));
+
+                // v1.2+: 使用 message 对象封装内容，v1.0: 直接使用 text 字段
+                if (useNewProtocol) {
+                    Map<String, Object> message = new LinkedHashMap<>();
+                    message.put("type", "text");
+                    message.put("content", text);
+                    data.put("message", message);
+
+                    // v1.2+: 使用 timestamp，保留 date 兼容
+                    data.put("timestamp", qixinMessage.getMessageTimestamp() != null
+                            ? qixinMessage.getMessageTimestamp() / 1000
+                            : System.currentTimeMillis() / 1000);
+                }
                 data.put("text", text);
                 data.put("date", qixinMessage.getMessageTimestamp() != null
                         ? qixinMessage.getMessageTimestamp() / 1000
                         : System.currentTimeMillis() / 1000);
 
-                // 添加企信特有字段
-                Map<String, Object> qixinContext = new LinkedHashMap<>();
-                qixinContext.put("env", qixinMessage.getEnv());
-                qixinContext.put("ea", qixinMessage.getEa());
-                qixinContext.put("session_id", qixinMessage.getSessionId());
-                qixinContext.put("parent_session_id", qixinMessage.getParentSessionId());
-                qixinContext.put("bot_full_id", qixinMessage.getBotFullId());
-                qixinContext.put("message_type", qixinMessage.getMessageType());
-                qixinContext.put("qixin_message_id", qixinMessage.getMessageId());
-                qixinContext.put("reply_message_id", qixinMessage.getReplyMessageId());
-                data.put("qixin", qixinContext);
+                // v1.2+: 平铺企信字段到顶层，v1.0: 使用嵌套 qixin 对象（但客户端不使用）
+                if (useNewProtocol) {
+                    data.put("env", qixinMessage.getEnv());
+                    data.put("ea", qixinMessage.getEa());
+                    data.put("session_id", qixinMessage.getSessionId());
+                    data.put("parent_session_id", qixinMessage.getParentSessionId());
+                    data.put("bot_full_id", qixinMessage.getBotFullId());
+                    data.put("message_type", qixinMessage.getMessageType());
+                    if (qixinMessage.getReplyMessageId() != null) {
+                        data.put("reply_message_id", qixinMessage.getReplyMessageId());
+                    }
+                } else {
+                    // v1.0: 保留 qixin 嵌套结构（兼容）
+                    Map<String, Object> qixinContext = new LinkedHashMap<>();
+                    qixinContext.put("env", qixinMessage.getEnv());
+                    qixinContext.put("ea", qixinMessage.getEa());
+                    qixinContext.put("session_id", qixinMessage.getSessionId());
+                    qixinContext.put("parent_session_id", qixinMessage.getParentSessionId());
+                    qixinContext.put("bot_full_id", qixinMessage.getBotFullId());
+                    qixinContext.put("message_type", qixinMessage.getMessageType());
+                    qixinContext.put("qixin_message_id", qixinMessage.getMessageId());
+                    qixinContext.put("reply_message_id", qixinMessage.getReplyMessageId());
+                    data.put("qixin", qixinContext);
+                }
 
-                String json = objectMapper.writeValueAsString(Map.of(
-                        "type", "message",
-                        "data", data
-                ));
+                // v1.2+: 添加协议版本标识
+                Map<String, Object> root;
+                if (useNewProtocol) {
+                    root = Map.of(
+                            "type", "message",
+                            "version", "1.0",
+                            "data", data
+                    );
+                } else {
+                    root = Map.of(
+                            "type", "message",
+                            "data", data
+                    );
+                }
+
+                String json = objectMapper.writeValueAsString(root);
 
                 emitter.send(SseEmitter.event()
                         .name("message")
                         .data(json));
 
-                log.debug("Qixin message sent to Bot via SSE: appId={}, chatId={}", appId, chatId);
+                log.debug("Qixin message sent to Bot via SSE: appId={}, chatId={}, newProtocol={}",
+                        appId, chatId, useNewProtocol);
             } catch (IOException e) {
                 log.error("Failed to send Qixin message to Bot via SSE: appId={}, error={}", appId, e.getMessage());
                 unregisterBot(appId);

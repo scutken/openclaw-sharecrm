@@ -109,8 +109,8 @@ public class BotSseController {
         SseEmitter emitter = new SseEmitter(effectiveTimeout);
 
         ThreadUtil.execute(() -> {
-                    // 注册会话
-                    boolean isNew = sseSessionManager.registerBot(appId, emitter);
+                    // 注册会话，传递客户端版本
+                    boolean isNew = sseSessionManager.registerBot(appId, emitter, version);
 
                     // 发送 connected 事件
                     try {
