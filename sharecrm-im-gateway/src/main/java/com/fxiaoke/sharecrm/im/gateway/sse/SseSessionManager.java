@@ -233,7 +233,7 @@ public class SseSessionManager {
                         ? qixinMessage.getMessageTimestamp() / 1000
                         : System.currentTimeMillis() / 1000);
 
-                // v1.2+: 平铺企信字段到顶层，v1.0: 使用嵌套 qixin 对象（但客户端不使用）
+                // v1.2+: 平铺企信字段到顶层，v1.0: 不发送 qixin 字段（客户端未使用）
                 if (useNewProtocol) {
                     data.put("env", qixinMessage.getEnv());
                     data.put("ea", qixinMessage.getEa());
@@ -244,19 +244,8 @@ public class SseSessionManager {
                     if (qixinMessage.getReplyMessageId() != null) {
                         data.put("reply_message_id", qixinMessage.getReplyMessageId());
                     }
-                } else {
-                    // v1.0: 保留 qixin 嵌套结构（兼容）
-                    Map<String, Object> qixinContext = new LinkedHashMap<>();
-                    qixinContext.put("env", qixinMessage.getEnv());
-                    qixinContext.put("ea", qixinMessage.getEa());
-                    qixinContext.put("session_id", qixinMessage.getSessionId());
-                    qixinContext.put("parent_session_id", qixinMessage.getParentSessionId());
-                    qixinContext.put("bot_full_id", qixinMessage.getBotFullId());
-                    qixinContext.put("message_type", qixinMessage.getMessageType());
-                    qixinContext.put("qixin_message_id", qixinMessage.getMessageId());
-                    qixinContext.put("reply_message_id", qixinMessage.getReplyMessageId());
-                    data.put("qixin", qixinContext);
                 }
+                // v1.0: 不发送 qixin 嵌套字段（客户端未使用）
 
                 // v1.2+: 添加协议版本标识
                 Map<String, Object> root;
