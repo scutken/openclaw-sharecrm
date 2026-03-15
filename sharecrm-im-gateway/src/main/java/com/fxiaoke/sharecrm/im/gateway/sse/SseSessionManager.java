@@ -188,53 +188,64 @@ public class SseSessionManager {
     /**
      * 向 Bot 发送企信格式消息
      *
-     * 根据客户端版本决定消息格式：
-     * - v1.0: 原有格式，message_id 使用内部生成
-     * - v1.2+: 新格式，message_id 使用企信真实ID，添加 message 对象
+     * 消息数据结构：
+     * {
+     *   "type": "message",
+     *   "version": "1.0",      // v1.2+ 插件使用，用于标识协议版本
+     *   "data": {
+     *     "message_id": "...", // v1.2+ 使用企信真实ID，v1.0 使用内部生成
+     *     "chat_id": "...",
+     *     "chat_type": "...",
+     *     "from": {"id": "...", "name": "..."},
+     *     "text": "...",      // v1.0 使用
+     *     "date": ...,        // v1.0 使用
+     *     "message": {...},   // v1.2+ 使用，消息对象（支持多媒体扩展）
+     *     "timestamp": ...,   // v1.2+ 使用
+     *     // v1.2+ 平铺的企信字段
+     *     "env": ...,
+     *     "ea": "...",
+     *     "session_id": "...",
+     *     "parent_session_id": "...",
+     *     "bot_full_id": "...",
+     *     "message_type": "...",
+     *     "reply_message_id": "..."
+     *   }
+     * }
      */
     public void sendQixinMessageToBot(String appId, String chatId, String messageId, String text,
                                        String userId, String userName, String chatType, QixinMessage.InboundMessage qixinMessage) {
         getBotEmitter(appId).ifPresent(emitter -> {
             try {
-                // 根据客户端版本决定消息格式
                 boolean useNewProtocol = isNewProtocol(appId);
+                Long qixinMessageId = qixinMessage.getMessageId();
+                long timestamp = qixinMessage.getMessageTimestamp() != null
+                        ? qixinMessage.getMessageTimestamp() / 1000
+                        : System.currentTimeMillis() / 1000;
 
+                // 构建消息数据
                 Map<String, Object> data = new LinkedHashMap<>();
 
-                // v1.2+: 使用企信真实 messageId，v1.0: 使用内部生成的 messageId
-                Long qixinMessageId = qixinMessage.getMessageId();
-                if (useNewProtocol && qixinMessageId != null) {
-                    data.put("message_id", String.valueOf(qixinMessageId));
-                } else {
-                    data.put("message_id", messageId);
-                }
+                // message_id: v1.2+ 使用企信真实ID，v1.0 使用内部生成
+                data.put("message_id", (useNewProtocol && qixinMessageId != null)
+                        ? String.valueOf(qixinMessageId) : messageId);
 
                 data.put("chat_id", chatId);
                 data.put("chat_type", normalizeChatType(chatType));
-                data.put("from", Map.of(
-                        "id", userId,
-                        "name", userName
-                ));
+                data.put("from", Map.of("id", userId, "name", userName));
 
-                // v1.2+: 使用 message 对象封装内容，v1.0: 直接使用 text 字段
+                // v1.0 字段
+                data.put("text", text);
+                data.put("date", timestamp);
+
+                // v1.2+ 字段
                 if (useNewProtocol) {
                     Map<String, Object> message = new LinkedHashMap<>();
                     message.put("type", "text");
                     message.put("content", text);
                     data.put("message", message);
+                    data.put("timestamp", timestamp);
 
-                    // v1.2+: 使用 timestamp，保留 date 兼容
-                    data.put("timestamp", qixinMessage.getMessageTimestamp() != null
-                            ? qixinMessage.getMessageTimestamp() / 1000
-                            : System.currentTimeMillis() / 1000);
-                }
-                data.put("text", text);
-                data.put("date", qixinMessage.getMessageTimestamp() != null
-                        ? qixinMessage.getMessageTimestamp() / 1000
-                        : System.currentTimeMillis() / 1000);
-
-                // v1.2+: 平铺企信字段到顶层，v1.0: 不发送 qixin 字段（客户端未使用）
-                if (useNewProtocol) {
+                    // 平铺企信字段
                     data.put("env", qixinMessage.getEnv());
                     data.put("ea", qixinMessage.getEa());
                     data.put("session_id", qixinMessage.getSessionId());
@@ -245,9 +256,8 @@ public class SseSessionManager {
                         data.put("reply_message_id", qixinMessage.getReplyMessageId());
                     }
                 }
-                // v1.0: 不发送 qixin 嵌套字段（客户端未使用）
 
-                // v1.2+: 添加协议版本标识
+                // 构建根对象，v1.2+ 添加 version 字段
                 Map<String, Object> root;
                 if (useNewProtocol) {
                     root = Map.of(
