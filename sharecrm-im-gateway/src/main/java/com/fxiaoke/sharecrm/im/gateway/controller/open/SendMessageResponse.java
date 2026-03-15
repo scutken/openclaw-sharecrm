@@ -1,12 +1,17 @@
 package com.fxiaoke.sharecrm.im.gateway.controller.open;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 /**
  * Bot 发送消息到企信的响应
  */
 public class SendMessageResponse {
 
+    @JsonProperty("message_id")
     private String messageId;
+
     private boolean success;
+
     private String error;
 
     public SendMessageResponse() {
