@@ -109,6 +109,19 @@ public class QixinMessage {
             String[] parts = senderFullId.split("\\.");
             return parts.length > 2 ? parts[2] : senderFullId;
         }
+
+
+        /**
+         * 从发送人 ID 提取用户名
+         * senderFullId 格式: E.ea.employId
+         */
+        public int extractUserId() {
+            if (senderFullId == null) {
+                return 0;
+            }
+            String[] parts = senderFullId.split("\\.");
+            return parts.length > 2 ? Integer.parseInt(parts[2]) : 0;
+        }
     }
 
     /**

@@ -1,7 +1,9 @@
 package com.fxiaoke.sharecrm.im.gateway.controller;
 
+import com.facishare.qixin.api.model.session.Session;
 import com.fxiaoke.sharecrm.im.gateway.common.ErrorCode;
 import com.fxiaoke.sharecrm.im.gateway.common.Result;
+import com.fxiaoke.sharecrm.im.gateway.qixin.QixinClient;
 import com.fxiaoke.sharecrm.im.gateway.qixin.QixinMessage;
 import com.fxiaoke.sharecrm.im.gateway.service.AccountService;
 import com.fxiaoke.sharecrm.im.gateway.sse.SseSessionManager;
@@ -11,8 +13,6 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.UUID;
 
 /**
  * 发送消息到 Bot
@@ -28,6 +28,7 @@ public class BotMessageController {
 
     private final SseSessionManager sessionManager;
     private final AccountService accountService;
+    private final QixinClient qixinClient;
 
     /**
      * 发送消息给 Bot
@@ -39,7 +40,6 @@ public class BotMessageController {
         log.info("[To Bot] botFullId={}, sessionId={}, sender={}, content={}",
                 message.getBotFullId(), message.getSessionId(),
                 message.getSenderFullId(), message.getMessageContent());
-
         // 验证必填参数
         if (message.getBotFullId() == null || message.getBotFullId().isEmpty()) {
             return Result.error(ErrorCode.PARAM_MISSING, "botFullId cannot be empty");
@@ -60,6 +60,7 @@ public class BotMessageController {
 
         var account = accountOpt.get();
         String appId = account.getAppId();
+        String ea = account.getEa();
 
         // 检查 Bot 是否在线（SSE）
         if (!sessionManager.isOnline(appId)) {
@@ -78,7 +79,10 @@ public class BotMessageController {
         if (message.getSenderFullId() == null) {
             message.setSenderFullId("E." + message.getEa() + ".unknown");
         }
-
+        try {
+            Session session = qixinClient.getSession(ea, message.extractUserId(), appId, message.getSessionId());
+        } catch (Exception ignore) {
+        }
         String text = message.getMessageContent();
 
         sessionManager.sendQixinMessageToBot(
