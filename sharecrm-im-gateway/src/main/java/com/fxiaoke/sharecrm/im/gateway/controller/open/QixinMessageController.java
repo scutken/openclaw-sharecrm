@@ -21,7 +21,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import javax.servlet.http.HttpServletRequest;
 import java.util.Locale;
-import java.util.Map;
 
 import static com.fxiaoke.sharecrm.im.gateway.common.ErrorCode.INTERNAL_ERROR;
 
@@ -119,15 +118,16 @@ public class QixinMessageController {
         // 发送消息给企信
         try {
             SendMessageResult sendMessageResult = qixinClient.sendMessage(arg);
-            String messageId = String.valueOf(sendMessageResult.getMessageItem().getMessageId());
+            SendMessageResponse response = SendMessageResponse.ok(
+                    String.valueOf(sendMessageResult.getMessageItem().getMessageId()));
             log.info("[TO Qixin] appId={}, env={}, ea={}, sessionId={}, text={}, messageId={}",
                     appId, qixinSessionId.getEnv(), ea,
-                    qixinSessionId.getSessionId(), request.getText(), messageId);
-            return Result.success(Map.of("message_id", messageId));
+                    qixinSessionId.getSessionId(), request.getText(), response.getMessageId());
+            return Result.success(response);
         } catch (Exception e) {
             log.warn("[TO Qixin] Send failed: appId={}, sessionId={}, error={}",
                     appId, qixinSessionId.getSessionId(), e.getMessage(), e);
-            return Result.error(INTERNAL_ERROR, "Send Message To Qixin failed.");
+            return Result.success(SendMessageResponse.fail(e.getMessage()));
         }
 
     }

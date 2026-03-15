@@ -257,21 +257,14 @@ public class SseSessionManager {
                 }
 
                 // 构建根对象，v1.2+ 添加 version 字段
-                Map<String, Object> root;
+                SseMessage sseMessage;
                 if (useNewProtocol) {
-                    root = Map.of(
-                            "type", "message",
-                            "version", "1.0",
-                            "data", data
-                    );
+                    sseMessage = SseMessage.of("message", "1.0", data);
                 } else {
-                    root = Map.of(
-                            "type", "message",
-                            "data", data
-                    );
+                    sseMessage = SseMessage.of("message", data);
                 }
 
-                String json = objectMapper.writeValueAsString(root);
+                String json = objectMapper.writeValueAsString(sseMessage);
 
                 emitter.send(SseEmitter.event()
                         .name("message")
