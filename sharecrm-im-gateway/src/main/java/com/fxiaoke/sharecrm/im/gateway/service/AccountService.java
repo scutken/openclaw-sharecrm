@@ -29,31 +29,30 @@ public class AccountService {
     }
 
     /**
-     * 根据 appId 查询账号
+     * 根据 appId 查询账号（O(1)）
      */
     public Optional<Account> findByAppId(String appId) {
-        return accountProperties.getAccounts().stream()
-                .filter(account -> account.getAppId().equals(appId))
-                .findFirst();
+        Account account = accountProperties.findByAppId(appId);
+        return Optional.ofNullable(account);
     }
 
     /**
-     * 根据凭据查询账号
+     * 根据凭据查询账号（需要遍历，但可优化）
      */
     public Optional<Account> findByCredentials(String appId, String appSecret) {
-        return accountProperties.getAccounts().stream()
-                .filter(account -> account.getAppId().equals(appId)
-                        && account.getAppSecret().equals(appSecret))
-                .findFirst();
+        Account account = accountProperties.findByAppId(appId);
+        if (account != null && appSecret != null && appSecret.equals(account.getAppSecret())) {
+            return Optional.of(account);
+        }
+        return Optional.empty();
     }
 
     /**
-     * 根据企信 botFullId 查询账号
+     * 根据企信 botFullId 查询账号（O(1)）
      */
-    public Optional<Account> findByBotFullId(String ea,String botFullId) {
-        return accountProperties.getAccounts().stream()
-                .filter(account -> ea.equals(account.getEa()) && botFullId.equals(account.getBotFullId()))
-                .findFirst();
+    public Optional<Account> findByBotFullId(String ea, String botFullId) {
+        Account account = accountProperties.findByBotFullId(ea, botFullId);
+        return Optional.ofNullable(account);
     }
 
     /**

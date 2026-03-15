@@ -13,6 +13,7 @@ import javax.annotation.PostConstruct;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 账号配置属性
@@ -27,15 +28,56 @@ public class AccountProperties {
      */
     private List<Account> accounts = new ArrayList<>();
 
+    /**
+     * appId -> Account 索引（O(1) 查询）
+     */
+    private final Map<String, Account> appIdIndex = new ConcurrentHashMap<>();
+
+    /**
+     * (ea + botFullId) -> Account 索引（O(1) 查询）
+     */
+    private final Map<String, Account> botFullIdIndex = new ConcurrentHashMap<>();
+
     @PostConstruct
     public void init() {
         ConfigFactory.getInstance().getConfig("erpdss-openclaw-accounts", config -> {
             log.info("accounts reloaded begin, {}", accounts);
             String s = new String(config.getContent());
             List<Account> newAccounts = buildAccounts(s);
+            rebuildIndexes(newAccounts);
             accounts = newAccounts;
             log.info("accounts reloaded, {}", accounts);
         });
+    }
+
+    /**
+     * 重建索引
+     */
+    private void rebuildIndexes(List<Account> newAccounts) {
+        appIdIndex.clear();
+        botFullIdIndex.clear();
+        for (Account account : newAccounts) {
+            if (account.getAppId() != null) {
+                appIdIndex.put(account.getAppId(), account);
+            }
+            if (account.getEa() != null && account.getBotFullId() != null) {
+                botFullIdIndex.put(account.getEa() + "|" + account.getBotFullId(), account);
+            }
+        }
+    }
+
+    /**
+     * 根据 appId 查询账号（O(1)）
+     */
+    public Account findByAppId(String appId) {
+        return appIdIndex.get(appId);
+    }
+
+    /**
+     * 根据 ea + botFullId 查询账号（O(1)）
+     */
+    public Account findByBotFullId(String ea, String botFullId) {
+        return botFullIdIndex.get(ea + "|" + botFullId);
     }
 
     @NotNull

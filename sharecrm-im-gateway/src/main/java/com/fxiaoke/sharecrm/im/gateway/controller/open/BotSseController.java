@@ -8,6 +8,7 @@ import com.fxiaoke.sharecrm.im.gateway.service.AuthService;
 import com.fxiaoke.sharecrm.im.gateway.sse.SseSessionManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -41,19 +42,44 @@ public class BotSseController {
 
     /**
      * SSE 连接超时时间（毫秒）
-     * 0 表示永不超时
+     * 默认 5 分钟，0 表示永不超时
      */
-    private static final long SSE_TIMEOUT = 0L;
+    @Value("${sse.timeout:300000}")
+    private long sseTimeout;
+
+    /**
+     * SSE 连接最大存活时间（毫秒）
+     * 超过此时间后连接自动断开，强制重连
+     * 默认 30 分钟
+     */
+    @Value("${sse.max-lifetime:1800000}")
+    private long sseMaxLifetime;
+
+    /**
+     * 最低支持超时功能的版本（v1.2.0）
+     */
+    private static final String MIN_VERSION_FOR_TIMEOUT = "1.2.0";
 
     /**
      * Bot SSE 连接端点
      *
-     * @param token AccessToken
+     * @param token    AccessToken
+     * @param version  插件版本（可选），默认为 v1.0.0，>= v1.2.0 启用超时
      * @return SseEmitter
      */
     @GetMapping(value = "/bot/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter connect(@RequestParam("token") String token) {
-        log.debug("Bot SSE connection request");
+    public SseEmitter connect(
+            @RequestParam("token") String token,
+            @RequestParam(value = "version", required = false, defaultValue = "v1.0.0") String version) {
+        log.debug("Bot SSE connection request, version={}", version);
+
+        // 解析版本号，判断是否启用超时
+        boolean enableTimeout = isVersionGreaterOrEqual(version, MIN_VERSION_FOR_TIMEOUT);
+        log.info("Plugin version: {}, enableTimeout: {}", version, enableTimeout);
+
+        // 根据版本决定超时配置
+        long effectiveTimeout = enableTimeout ? sseTimeout : 0L;
+        long effectiveMaxLifetime = enableTimeout ? sseMaxLifetime : 0L;
 
         if (token == null || token.isEmpty()) {
             log.warn("SSE connection failed: empty token");
@@ -79,8 +105,9 @@ public class BotSseController {
             // 不直接拒绝，让 registerBot 去断开旧连接
         }
 
-        // 创建 SSE Emitter
-        SseEmitter emitter = new SseEmitter(SSE_TIMEOUT);
+        // 创建 SSE Emitter，使用配置的超时时间
+        SseEmitter emitter = new SseEmitter(effectiveTimeout);
+
         ThreadUtil.execute(() -> {
                     // 注册会话
                     boolean isNew = sseSessionManager.registerBot(appId, emitter);
@@ -91,9 +118,14 @@ public class BotSseController {
                                 .name("connected")
                                 .data(Map.of(
                                         "type", "connected",
-                                        "data", Map.of("bot_id", appId)
+                                        "data", Map.of(
+                                                "bot_id", appId,
+                                                "version", version,
+                                                "max_lifetime", effectiveMaxLifetime
+                                        )
                                 )));
-                        log.info("Bot SSE connected: appId={}, isNew={}", appId, isNew);
+                        log.info("Bot SSE connected: appId={}, isNew={}, version={}, timeout={}ms, maxLifetime={}ms",
+                                appId, isNew, version, effectiveTimeout, effectiveMaxLifetime);
                     } catch (IOException e) {
                         log.error("Failed to send connected event: appId={}", appId);
                         sseSessionManager.unregisterBot(appId);
@@ -102,5 +134,45 @@ public class BotSseController {
                 }
         );
         return emitter;
+    }
+
+    /**
+     * 比较版本号，判断 currentVersion >= minVersion
+     * 支持格式：v1.0.0, 1.0.0, v1.2.0, 1.2.0
+     */
+    private boolean isVersionGreaterOrEqual(String currentVersion, String minVersion) {
+        try {
+            // 去除 v 前缀
+            String current = currentVersion.replaceFirst("^v", "");
+            String min = minVersion.replaceFirst("^v", "");
+
+            String[] currentParts = current.split("\\.");
+            String[] minParts = min.split("\\.");
+
+            int maxLen = Math.max(currentParts.length, minParts.length);
+
+            for (int i = 0; i < maxLen; i++) {
+                int currentPart = i < currentParts.length ? parseIntSafe(currentParts[i]) : 0;
+                int minPart = i < minParts.length ? parseIntSafe(minParts[i]) : 0;
+
+                if (currentPart > minPart) {
+                    return true;
+                } else if (currentPart < minPart) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (Exception e) {
+            log.warn("Failed to parse version: current={}, min={}, default to false", currentVersion, minVersion);
+            return false;
+        }
+    }
+
+    private int parseIntSafe(String s) {
+        try {
+            return Integer.parseInt(s.replaceAll("[^0-9].*", ""));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 }
