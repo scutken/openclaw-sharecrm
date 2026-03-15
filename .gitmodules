@@ -1,0 +1,3 @@
+[submodule "openclaw-sharecrm"]
+	path = openclaw-sharecrm
+	url = https://github.com/scutken/openclaw-sharecrm.git
