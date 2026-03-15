@@ -225,8 +225,8 @@ public class SseSessionManager {
                 // 构建消息数据
                 Map<String, Object> data = new LinkedHashMap<>();
 
-                // message_id: v1.2+ 使用企信真实ID，v1.0 使用内部生成
-                data.put("message_id", (useNewProtocol && qixinMessageId != null)
+                // message_id: 统一使用企信真实ID
+                data.put("message_id", qixinMessageId != null
                         ? String.valueOf(qixinMessageId) : messageId);
 
                 data.put("chat_id", chatId);
