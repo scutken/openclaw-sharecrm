@@ -25,26 +25,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class QixinClient {
 
+    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
     private final OpenMessageService openMessageService;
-    private final SessionService sessionService;
-
-    private final static Map<String, Session> qixinSessionMap = new WeakKeyConcurrentMap<>();
-
-    public Session getSession(String ea, int userId, String appId, String sessionId) {
-        return qixinSessionMap.computeIfAbsent(sessionId, (k) -> {
-            try {
-                SessionInfoArg arg = new SessionInfoArg();
-                arg.setSessionId(sessionId);
-                arg.setAuthInfo(AuthInfo.buildAuthInfoForNoAuth(ea, userId, appId, TraceContext.get().getTraceId()));
-                Session sessionInfo = sessionService.getSessionInfo(arg);
-                log.info("get qixin session:{}", sessionInfo);
-                return sessionInfo;
-            } catch (Exception e) {
-                log.warn("get qixin session error", e);
-            }
-            return null;
-        });
-    }
 
     /**
      * 发送消息给企信

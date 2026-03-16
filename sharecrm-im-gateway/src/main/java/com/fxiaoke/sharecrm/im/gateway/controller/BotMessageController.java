@@ -1,9 +1,7 @@
 package com.fxiaoke.sharecrm.im.gateway.controller;
 
-import com.facishare.qixin.api.model.session.Session;
 import com.fxiaoke.sharecrm.im.gateway.common.ErrorCode;
 import com.fxiaoke.sharecrm.im.gateway.common.Result;
-import com.fxiaoke.sharecrm.im.gateway.qixin.QixinClient;
 import com.fxiaoke.sharecrm.im.gateway.qixin.QixinMessage;
 import com.fxiaoke.sharecrm.im.gateway.service.AccountService;
 import com.fxiaoke.sharecrm.im.gateway.sse.SseSessionManager;
@@ -28,7 +26,6 @@ public class BotMessageController {
 
     private final SseSessionManager sessionManager;
     private final AccountService accountService;
-    private final QixinClient qixinClient;
 
     /**
      * 发送消息给 Bot
@@ -78,10 +75,6 @@ public class BotMessageController {
         }
         if (message.getSenderFullId() == null) {
             message.setSenderFullId("E." + message.getEa() + ".unknown");
-        }
-        try {
-            Session session = qixinClient.getSession(ea, message.extractUserId(), appId, message.getSessionId());
-        } catch (Exception ignore) {
         }
         String text = message.getMessageContent();
 
