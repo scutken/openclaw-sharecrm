@@ -8,7 +8,9 @@
 export interface ShareCrmSseConnectedEvent {
   type: "connected";
   data: {
-    bot_id: string;
+    bot_full_id: string;
+    version?: string;
+    max_lifetime?: number;
   };
 }
 

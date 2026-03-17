@@ -20,7 +20,7 @@ const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000; // 提前 5 分钟刷新 Token
 
 export type ShareCrmClientOptions = {
   account: ResolvedShareCrmAccount;
-  onConnected: (botId: string) => void;
+  onConnected: (info: { botFullId: string; version?: string; maxLifetime?: number }) => void;
   onMessage: (data: ShareCrmSseEvent & { type: "message" }) => void;
   onDisconnected: (reason: string) => void;
   onError?: (error: Error) => void;
@@ -228,8 +228,12 @@ export class ShareCrmClient {
     switch (msg.type) {
       case "connected":
         this._connected = true;
-        log(`sharecrm: 已认证为 ${msg.data.bot_id}`);
-        this.options.onConnected(msg.data.bot_id);
+        log(`sharecrm: 已连接企信 Bot ${msg.data.bot_full_id}`);
+        this.options.onConnected({
+          botFullId: msg.data.bot_full_id,
+          version: msg.data.version,
+          maxLifetime: msg.data.max_lifetime,
+        });
         break;
 
       case "message":

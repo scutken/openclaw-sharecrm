@@ -31,7 +31,7 @@ const CHANNEL_ID = "sharecrm";
 // 各账号的活跃客户端
 const activeClients = new Map<string, ShareCrmClient>();
 // 各账号的 Bot 信息
-const botInfo = new Map<string, { botId: string }>();
+const botInfo = new Map<string, { botFullId: string; version?: string; maxLifetime?: number }>();
 // Direct 消息会话映射: accountId -> (userId -> chatId)
 const directChatByUserByAccount = new Map<string, Map<string, string>>();
 
@@ -364,9 +364,9 @@ async function monitorSingleAccount(params: {
   return new Promise<void>((resolve) => {
     const client = new ShareCrmClient({
       account,
-      onConnected: (botId) => {
-        botInfo.set(accountId, { botId });
-        log(`sharecrm[${accountId}]: 已连接为 ${botId}`);
+      onConnected: (info) => {
+        botInfo.set(accountId, info);
+        log(`sharecrm[${accountId}]: 已连接企信 Bot ${info.botFullId}`);
       },
       onMessage: (event) => {
         handleInboundMessage({
@@ -466,7 +466,7 @@ export function getActiveClient(accountId: string): ShareCrmClient | undefined {
 /**
  * 获取账号的 Bot 信息
  */
-export function getBotInfo(accountId: string): { botId: string } | undefined {
+export function getBotInfo(accountId: string): { botFullId: string; version?: string; maxLifetime?: number } | undefined {
   return botInfo.get(accountId);
 }
 
