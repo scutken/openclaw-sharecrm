@@ -1,19 +1,10 @@
 package com.fxiaoke.sharecrm.im.gateway.qixin;
 
-import cn.hutool.core.map.reference.WeakKeyConcurrentMap;
-import com.facishare.qixin.api.model.AuthInfo;
 import com.facishare.qixin.api.model.message.result.SendMessageResult;
-import com.facishare.qixin.api.model.open.arg.SendOpenAgentMessageArg;
-import com.facishare.qixin.api.model.session.Session;
-import com.facishare.qixin.api.model.session.arg.SessionInfoArg;
 import com.facishare.qixin.api.open.OpenMessageService;
-import com.facishare.qixin.api.service.SessionService;
-import com.github.trace.TraceContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-
-import java.util.Map;
 
 /**
  * 企信 REST API 客户端
@@ -31,10 +22,11 @@ public class QixinClient {
     /**
      * 发送消息给企信
      *
-     * @param arg 发送消息参数
+     * @param message 出站消息命令
      * @return 发送结果
      */
-    public SendMessageResult sendMessage(SendOpenAgentMessageArg arg) {
+    public SendMessageResult sendMessage(ToQixinMessage message) {
+        var arg = message.toSendArg();
         log.info("[Qixin send] arg={}", arg);
         return openMessageService.sendOpenAgentMessage(arg);
     }

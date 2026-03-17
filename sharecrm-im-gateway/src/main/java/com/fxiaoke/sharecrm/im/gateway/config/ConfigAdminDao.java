@@ -12,9 +12,7 @@ import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 开发者服务实现类
@@ -59,9 +57,8 @@ public class ConfigAdminDao {
             // 只加密 accounts 数组
             String accountsJson = mapper.writeValueAsString(accounts);
             String encryptedAccounts = EncryptUtil.encrypt(accountsJson);
-            Map<String, Object> root = new LinkedHashMap<>();
-            root.put("accounts", encryptedAccounts);
-            String jsonContent = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(root);
+            String jsonContent = mapper.writerWithDefaultPrettyPrinter()
+                    .writeValueAsString(AccountsConfigPayload.encrypted(encryptedAccounts));
             iConfigAdmin.save(erpdssConfigToken, globalProfile, openclawAccountConfig, jsonContent);
         } catch (Exception e) {
             throw new RuntimeException(e);
@@ -82,9 +79,8 @@ public class ConfigAdminDao {
             // 只加密 accounts 数组
             String accountsJson = mapper.writeValueAsString(accounts);
             String encryptedAccounts = EncryptUtil.encrypt(accountsJson);
-            Map<String, Object> root = new LinkedHashMap<>();
-            root.put("accounts", encryptedAccounts);
-            String jsonContent = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(root);
+            String jsonContent = mapper.writerWithDefaultPrettyPrinter()
+                    .writeValueAsString(AccountsConfigPayload.encrypted(encryptedAccounts));
             iConfigAdmin.save(erpdssConfigToken, globalProfile, openclawAccountConfig, jsonContent);
         } catch (Exception e) {
             throw new RuntimeException(e);

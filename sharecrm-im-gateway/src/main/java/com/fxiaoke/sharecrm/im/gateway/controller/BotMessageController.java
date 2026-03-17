@@ -2,7 +2,7 @@ package com.fxiaoke.sharecrm.im.gateway.controller;
 
 import com.fxiaoke.sharecrm.im.gateway.common.ErrorCode;
 import com.fxiaoke.sharecrm.im.gateway.common.Result;
-import com.fxiaoke.sharecrm.im.gateway.qixin.QixinMessage;
+import com.fxiaoke.sharecrm.im.gateway.qixin.FromQixinMessage;
 import com.fxiaoke.sharecrm.im.gateway.service.AccountService;
 import com.fxiaoke.sharecrm.im.gateway.sse.SseSessionManager;
 import lombok.RequiredArgsConstructor;
@@ -33,7 +33,7 @@ public class BotMessageController {
      * 企信发送的用户消息，转发给对应的 Bot
      */
     @PostMapping("/send")
-    public Result<Void> send(@RequestBody QixinMessage.InboundMessage message) {
+    public Result<Void> send(@RequestBody FromQixinMessage message) {
         log.info("[To Bot] botFullId={}, sessionId={}, sender={}, content={}",
                 message.getBotFullId(), message.getSessionId(),
                 message.getSenderFullId(), message.getMessageContent());

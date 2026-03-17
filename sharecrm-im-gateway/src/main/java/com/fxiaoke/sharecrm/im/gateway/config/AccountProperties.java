@@ -1,6 +1,5 @@
 package com.fxiaoke.sharecrm.im.gateway.config;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fxiaoke.sharecrm.im.gateway.entity.Account;
 import com.github.autoconf.ConfigFactory;
@@ -88,8 +87,8 @@ public class AccountProperties {
         }
         try {
             ObjectMapper mapper = new ObjectMapper();
-            Map<String, Object> root = mapper.readValue(json, new TypeReference<Map<String, Object>>() {});
-            Object accountsValue = root.get("accounts");
+            AccountsConfigPayload root = mapper.readValue(json, AccountsConfigPayload.class);
+            Object accountsValue = root.getAccounts();
             if (accountsValue == null) {
                 return newAccounts;
             }
@@ -99,14 +98,14 @@ public class AccountProperties {
                 // 新格式：accounts 值是加密字符串
                 String encryptedAccounts = (String) accountsValue;
                 String decryptedAccounts = EncryptUtil.decrypt(encryptedAccounts);
-                List<Account> accountList = mapper.readValue(decryptedAccounts, new TypeReference<List<Account>>() {});
+                List<Account> accountList = mapper.readerForListOf(Account.class).readValue(decryptedAccounts);
                 if (accountList != null) {
                     newAccounts.addAll(accountList);
                 }
             } else if (accountsValue instanceof List) {
                 // 旧格式：accounts 值是数组（兼容旧数据）
-                @SuppressWarnings("unchecked")
-                List<Account> accountList = mapper.convertValue(accountsValue, new TypeReference<List<Account>>() {});
+                List<Account> accountList = mapper.convertValue(accountsValue,
+                        mapper.getTypeFactory().constructCollectionType(List.class, Account.class));
                 if (accountList != null) {
                     newAccounts.addAll(accountList);
                 }

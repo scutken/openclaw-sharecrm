@@ -12,8 +12,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Map;
-
 /**
  * 鉴权 API - 外部接口
  * <p>
@@ -35,7 +33,7 @@ public class AuthController {
     /**
      * 获取 AccessToken
      * <p>
-     * POST /im-gateway/auth/token
+     * 使用 Gateway 接入应用 ID 与密钥换取访问令牌
      */
     @PostMapping("auth/token")
     public Result<?> getToken(@RequestBody AuthTokenRequest request) {
@@ -48,10 +46,10 @@ public class AuthController {
         if (result.isSuccess()) {
             AuthService.TokenInfo tokenInfo = authService.generateAccessToken(result.getAccount());
             log.info("Token generated: appId={}", request.getAppId());
-            return Result.success(Map.of(
-                    "accessToken", tokenInfo.getAccessToken(),
-                    "expiresIn", tokenInfo.getExpiresIn(),
-                    "tokenType", tokenInfo.getTokenType()
+            return Result.success(new AuthTokenResponse(
+                    tokenInfo.getAccessToken(),
+                    tokenInfo.getExpiresIn(),
+                    tokenInfo.getTokenType()
             ));
         } else {
             log.debug("Token generation failed: appId={}, reason={}", request.getAppId(), result.getMessage());

@@ -20,18 +20,20 @@ public class Account {
     private String ea;
 
     /**
-     * 应用ID
+     * Gateway 接入应用 ID
+     * 用于鉴权、令牌签发与 SSE 连接管理
      */
     private String appId;
 
     /**
-     * 应用密钥
+     * Gateway 接入密钥
      */
     private String appSecret;
 
     /**
      * 企信侧 Bot 完整 ID
      * 格式示例：B.ea.botId
+     * 一个 botFullId 可映射到一个 appId，但 appId 允许调整
      */
     private String botFullId;
 

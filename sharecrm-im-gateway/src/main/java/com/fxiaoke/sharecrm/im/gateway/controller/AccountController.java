@@ -34,15 +34,16 @@ public class AccountController {
          */
         private String ea;
         /**
-         * 需要响应这个消息的botId
+         * 企信侧 Bot 完整 ID
+         * 格式示例：B.ea.botId
          */
         private String botFullId;
         /**
-         * 应用ID
+         * Gateway 接入应用 ID
          */
         private String appId;
         /**
-         * 应用密钥
+         * Gateway 接入密钥
          */
         private String appSecret;
     }
@@ -57,7 +58,8 @@ public class AccountController {
          */
         private String ea;
         /**
-         * 需要响应这个消息的botId
+         * 企信侧 Bot 完整 ID
+         * 格式示例：B.ea.botId
          */
         private String botFullId;
     }

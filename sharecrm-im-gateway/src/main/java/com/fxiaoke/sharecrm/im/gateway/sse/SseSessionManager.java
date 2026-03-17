@@ -1,7 +1,11 @@
 package com.fxiaoke.sharecrm.im.gateway.sse;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fxiaoke.sharecrm.im.gateway.qixin.QixinMessage;
+import com.fxiaoke.sharecrm.im.gateway.qixin.FromQixinMessage;
+import com.fxiaoke.sharecrm.im.gateway.sse.SsePayloads.ToBotMessage;
+import com.fxiaoke.sharecrm.im.gateway.sse.SsePayloads.Ping;
+import com.fxiaoke.sharecrm.im.gateway.sse.SsePayloads.SenderInfo;
+import com.fxiaoke.sharecrm.im.gateway.sse.SsePayloads.TextMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -9,7 +13,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -206,14 +213,14 @@ public class SseSessionManager {
      *     "ea": "...",
      *     "session_id": "...",
      *     "parent_session_id": "...",
-     *     "bot_full_id": "...",
+     *     "bot_full_id": "...",   // 企信侧 Bot 完整 ID
      *     "message_type": "...",
      *     "reply_message_id": "..."
      *   }
      * }
      */
     public void sendQixinMessageToBot(String appId, String chatId, String text,
-                                       String userId, String userName, String chatType, QixinMessage.InboundMessage qixinMessage) {
+                                       String userId, String userName, String chatType, FromQixinMessage qixinMessage) {
         getBotEmitter(appId).ifPresent(emitter -> {
             try {
                 boolean useNewProtocol = isNewProtocol(appId);
@@ -222,38 +229,34 @@ public class SseSessionManager {
                         ? qixinMessage.getMessageTimestamp() / 1000
                         : System.currentTimeMillis() / 1000;
 
-                // 构建消息数据
-                Map<String, Object> data = new LinkedHashMap<>();
-
-                // message_id: 统一使用企信真实ID
-                data.put("message_id",  String.valueOf(qixinMessageId));
-
-                data.put("chat_id", chatId);
-                data.put("chat_type", normalizeChatType(chatType));
-                data.put("from", Map.of("id", userId, "name", userName));
-
-                // v1.0 字段
-                data.put("text", text);
-                data.put("date", timestamp);
+                ToBotMessage data = ToBotMessage.builder()
+                        .messageId(String.valueOf(qixinMessageId))
+                        .chatId(chatId)
+                        .chatType(normalizeChatType(chatType))
+                        .from(SenderInfo.builder()
+                                .id(userId)
+                                .name(userName)
+                                .build())
+                        .text(text)
+                        .date(timestamp)
+                        .build();
 
                 // v1.2+ 字段
                 if (useNewProtocol) {
-                    Map<String, Object> message = new LinkedHashMap<>();
-                    message.put("type", "text");
-                    message.put("content", text);
-                    data.put("message", message);
-                    data.put("timestamp", timestamp);
+                    data.setMessage(TextMessage.builder()
+                            .type("text")
+                            .content(text)
+                            .build());
+                    data.setTimestamp(timestamp);
 
                     // 平铺企信字段
-                    data.put("env", qixinMessage.getEnv());
-                    data.put("ea", qixinMessage.getEa());
-                    data.put("session_id", qixinMessage.getSessionId());
-                    data.put("parent_session_id", qixinMessage.getParentSessionId());
-                    data.put("bot_full_id", qixinMessage.getBotFullId());
-                    data.put("message_type", qixinMessage.getMessageType());
-                    if (qixinMessage.getReplyMessageId() != null) {
-                        data.put("reply_message_id", qixinMessage.getReplyMessageId());
-                    }
+                    data.setEnv(qixinMessage.getEnv());
+                    data.setEa(qixinMessage.getEa());
+                    data.setSessionId(qixinMessage.getSessionId());
+                    data.setParentSessionId(qixinMessage.getParentSessionId());
+                    data.setBotFullId(qixinMessage.getBotFullId());
+                    data.setMessageType(qixinMessage.getMessageType());
+                    data.setReplyMessageId(qixinMessage.getReplyMessageId());
                 }
 
                 // 构建根对象，v1.2+ 添加 version 字段
@@ -295,10 +298,10 @@ public class SseSessionManager {
             try {
                 emitter.send(SseEmitter.event()
                         .name("ping")
-                        .data(Map.of(
-                                "type", "ping",
-                                "time", now / 1000
-                        )));
+                        .data(Ping.builder()
+                                .type("ping")
+                                .time(now / 1000)
+                                .build()));
             } catch (IOException e) {
                 // 忽略 Broken pipe 等连接断开异常，避免打印 ERROR 日志
                 // 这类异常说明客户端已断开，onError 回调会处理清理

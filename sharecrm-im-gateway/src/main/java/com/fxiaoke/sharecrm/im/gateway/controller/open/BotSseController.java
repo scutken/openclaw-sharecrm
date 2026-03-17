@@ -6,6 +6,8 @@ import com.fxiaoke.sharecrm.im.gateway.entity.Account;
 import com.fxiaoke.sharecrm.im.gateway.service.AuthException;
 import com.fxiaoke.sharecrm.im.gateway.service.AuthService;
 import com.fxiaoke.sharecrm.im.gateway.sse.SseSessionManager;
+import com.fxiaoke.sharecrm.im.gateway.sse.SsePayloads.Connected;
+import com.fxiaoke.sharecrm.im.gateway.sse.SsePayloads.ConnectedData;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,8 +21,6 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
-import java.util.Map;
-
 /**
  * Bot SSE 控制器
  * <p>
@@ -116,14 +116,14 @@ public class BotSseController {
                     try {
                         emitter.send(SseEmitter.event()
                                 .name("connected")
-                                .data(Map.of(
-                                        "type", "connected",
-                                        "data", Map.of(
-                                                "bot_id", appId,
-                                                "version", version,
-                                                "max_lifetime", effectiveMaxLifetime
-                                        )
-                                )));
+                                .data(Connected.builder()
+                                        .type("connected")
+                                        .data(ConnectedData.builder()
+                                                .botFullId(account.getBotFullId())
+                                                .version(version)
+                                                .maxLifetime(effectiveMaxLifetime)
+                                                .build())
+                                        .build()));
                         log.info("Bot SSE connected: appId={}, isNew={}, version={}, timeout={}ms, maxLifetime={}ms",
                                 appId, isNew, version, effectiveTimeout, effectiveMaxLifetime);
                     } catch (IOException e) {

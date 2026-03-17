@@ -1,13 +1,13 @@
 package com.fxiaoke.sharecrm.im.gateway.controller.open;
 
 import com.facishare.qixin.api.model.message.result.SendMessageResult;
-import com.facishare.qixin.api.model.open.arg.SendOpenAgentMessageArg;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fxiaoke.sharecrm.im.gateway.common.ErrorCode;
 import com.fxiaoke.sharecrm.im.gateway.common.Result;
 import com.fxiaoke.sharecrm.im.gateway.entity.Account;
 import com.fxiaoke.sharecrm.im.gateway.qixin.QixinClient;
 import com.fxiaoke.sharecrm.im.gateway.qixin.QixinSessionId;
+import com.fxiaoke.sharecrm.im.gateway.qixin.ToQixinMessage;
 import com.fxiaoke.sharecrm.im.gateway.service.AuthException;
 import com.fxiaoke.sharecrm.im.gateway.service.AuthService;
 import com.fxiaoke.sharecrm.im.gateway.sse.SseSessionManager;
@@ -20,8 +20,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import javax.servlet.http.HttpServletRequest;
-import java.util.Locale;
-
 import static com.fxiaoke.sharecrm.im.gateway.common.ErrorCode.INTERNAL_ERROR;
 
 /**
@@ -50,7 +48,7 @@ public class QixinMessageController {
     @PostMapping("/send")
     public Result<?> send(
             HttpServletRequest httpRequest,
-            @RequestBody InboundRequest request) {
+            @RequestBody FromBotRequest request) {
 
         // 从 Authorization 头部提取 Token
         String authHeader = httpRequest.getHeader("Authorization");
@@ -104,20 +102,17 @@ public class QixinMessageController {
         if (!qixinSessionId.getEa().equals(ea))
             return Result.error(ErrorCode.PARAM_INVALID, "EA mismatch");
 
-        SendOpenAgentMessageArg arg = new SendOpenAgentMessageArg();
-        arg.setEnv(qixinSessionId.getEnv());
-        arg.setEa(ea);
-        arg.setSessionId(qixinSessionId.getSessionId());
-        arg.setParentSessionId(qixinSessionId.getParentSessionId());
-        arg.setBotFullId(botFullId);
-        arg.setAgentMessageInfo(request.getText());
-        arg.setLocale(Locale.CHINA);
-        if (request.getReplyMessageId() != null) {
-            arg.setReplyMessageId(request.getReplyMessageId());
-        }
+        ToQixinMessage toQixinMessage = ToQixinMessage.from(
+                botFullId,
+                ea,
+                qixinSessionId,
+                request.getText(),
+                request.getReplyMessageId()
+        );
+
         // 发送消息给企信
         try {
-            SendMessageResult sendMessageResult = qixinClient.sendMessage(arg);
+            SendMessageResult sendMessageResult = qixinClient.sendMessage(toQixinMessage);
             SendMessageResponse response = SendMessageResponse.ok(
                     String.valueOf(sendMessageResult.getMessageItem().getMessageId()));
             log.info("[TO Qixin] appId={}, env={}, ea={}, sessionId={}, text={}, messageId={}",
@@ -136,7 +131,7 @@ public class QixinMessageController {
      * 上行消息请求
      */
     @Data
-    public static class InboundRequest {
+    public static class FromBotRequest {
         @JsonProperty("chat_id")
         private String chatId;
 
