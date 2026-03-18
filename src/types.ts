@@ -23,6 +23,7 @@ export interface ShareCrmSsePingEvent {
 /** SSE 消息事件 */
 export interface ShareCrmSseMessageEvent {
   type: "message";
+  version?: string;
   data: {
     message_id: string;
     chat_id: string;
@@ -33,16 +34,18 @@ export interface ShareCrmSseMessageEvent {
     };
     text: string;
     date: number;
-    qixin?: {
-      env: string;
-      ea: string;
-      session_id: string;
-      parent_session_id?: string;
-      bot_full_id: string;
-      message_type: string;
-      qixin_message_id: string;
-      reply_message_id?: string;
+    message?: {
+      type: string;
+      content: string;
     };
+    timestamp?: number;
+    env?: number;
+    ea?: string;
+    session_id?: string;
+    parent_session_id?: string;
+    bot_full_id?: string;
+    message_type?: string;
+    reply_message_id?: number;
   };
 }
 
@@ -87,6 +90,7 @@ export interface AuthTokenResponse {
 export interface SendMessageRequest {
   chat_id: string;
   text: string;
+  reply_message_id?: string | number;
 }
 
 /** 发送消息响应 */
@@ -133,6 +137,10 @@ export interface ShareCrmAccountConfigRaw {
   appSecret?: string;
   dmPolicy?: "open" | "pairing" | "allowlist" | "disabled";
   allowFrom?: (string | number)[];
+  groupPolicy?: "open" | "allowlist" | "disabled";
+  groupAllowFrom?: (string | number)[];
+  historyLimit?: number;
+  textChunkLimit?: number;
 }
 
 /** 解析后的完整账号配置 */

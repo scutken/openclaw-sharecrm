@@ -12,11 +12,40 @@ import type {
   ShareCrmSseEvent,
   ResolvedShareCrmAccount,
   AuthTokenResponse,
+  SendMessageRequest,
   SendMessageResponse,
 } from "./types.js";
 
 const RECONNECT_DELAY_MS = 3000;
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000; // 提前 5 分钟刷新 Token
+const MAX_LIFETIME_RECONNECT_BUFFER_MS = 5 * 1000;
+export const SHARECRM_GATEWAY_PROTOCOL_VERSION = "1.2.0";
+
+export function buildSseUrl(gatewayBaseUrl: string, token: string, version = SHARECRM_GATEWAY_PROTOCOL_VERSION): URL {
+  const url = new URL(gatewayBaseUrl.endsWith("/") ? gatewayBaseUrl : `${gatewayBaseUrl}/`);
+  const basePath = url.pathname.replace(/\/$/, "");
+  url.pathname = `${basePath}/im-gateway/bot/events`.replace(/\/+/g, "/");
+  url.searchParams.set("token", token);
+  url.searchParams.set("version", version);
+  return url;
+}
+
+export function buildSendMessagePayload(
+  chatId: string,
+  text: string,
+  options?: { replyMessageId?: string | number },
+): SendMessageRequest {
+  const payload: SendMessageRequest = {
+    chat_id: chatId,
+    text,
+  };
+
+  if (options?.replyMessageId != null && options.replyMessageId !== "") {
+    payload.reply_message_id = options.replyMessageId;
+  }
+
+  return payload;
+}
 
 export type ShareCrmClientOptions = {
   account: ResolvedShareCrmAccount;
@@ -34,6 +63,7 @@ export class ShareCrmClient {
   private options: ShareCrmClientOptions;
   private shouldReconnect = true;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private maxLifetimeTimer: ReturnType<typeof setTimeout> | null = null;
   private _connected = false;
   private _connecting = false;
 
@@ -87,10 +117,9 @@ export class ShareCrmClient {
     try {
       const token = await this.ensureToken();
       const { gatewayBaseUrl } = this.options.account;
-      const urlStr = `${gatewayBaseUrl}/im-gateway/bot/events?token=${token}`;
-      const url = new URL(urlStr);
+      const url = buildSseUrl(gatewayBaseUrl, token);
 
-      log(`sharecrm: 正在连接 SSE ${urlStr.replace(/\?token=.+$/, "?token=***")}`);
+      log(`sharecrm: 正在连接 SSE ${url.toString().replace(/token=[^&]+/, "token=***")}`);
 
       const httpModule = url.protocol === "https:" ? https : http;
 
@@ -178,6 +207,7 @@ export class ShareCrmClient {
 
   /** 清理请求 */
   private cleanupRequest(): void {
+    this.clearMaxLifetimeTimer();
     if (this.request) {
       this.request.destroy();
       this.request = null;
@@ -229,6 +259,7 @@ export class ShareCrmClient {
       case "connected":
         this._connected = true;
         log(`sharecrm: 已连接企信 Bot ${msg.data.bot_full_id}`);
+        this.refreshMaxLifetimeTimer(msg.data.max_lifetime);
         this.options.onConnected({
           botFullId: msg.data.bot_full_id,
           version: msg.data.version,
@@ -251,11 +282,41 @@ export class ShareCrmClient {
     }
   }
 
+  private clearMaxLifetimeTimer(): void {
+    if (this.maxLifetimeTimer) {
+      clearTimeout(this.maxLifetimeTimer);
+      this.maxLifetimeTimer = null;
+    }
+  }
+
+  private refreshMaxLifetimeTimer(maxLifetime?: number): void {
+    this.clearMaxLifetimeTimer();
+    if (!maxLifetime || maxLifetime <= 0) {
+      return;
+    }
+
+    const reconnectInMs = Math.max(1000, maxLifetime - MAX_LIFETIME_RECONNECT_BUFFER_MS);
+    const log = this.options.log ?? console.log;
+
+    this.maxLifetimeTimer = setTimeout(() => {
+      this.maxLifetimeTimer = null;
+      log(`sharecrm: SSE 连接即将达到最大生命周期，主动重连`);
+      this.cleanupRequest();
+      this._connected = false;
+      this.scheduleReconnect();
+    }, reconnectInMs);
+  }
+
   /** 通过 REST API 发送消息到指定会话 */
-  async sendMessage(chatId: string, text: string): Promise<{ messageId: string; chatId: string } | null> {
+  async sendMessage(
+    chatId: string,
+    text: string,
+    options?: { replyMessageId?: string | number },
+  ): Promise<{ messageId: string; chatId: string } | null> {
     try {
       const token = await this.ensureToken();
       const { gatewayBaseUrl } = this.options.account;
+      const payload = buildSendMessagePayload(chatId, text, options);
 
       const response = await fetch(`${gatewayBaseUrl}/im-gateway/qixin/message/send`, {
         method: "POST",
@@ -263,10 +324,7 @@ export class ShareCrmClient {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text,
-        }),
+        body: JSON.stringify(payload),
       });
 
       const data: SendMessageResponse = await response.json();
@@ -308,6 +366,7 @@ export class ShareCrmClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    this.clearMaxLifetimeTimer();
     this.cleanupRequest();
     this._connected = false;
   }

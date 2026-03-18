@@ -15,6 +15,8 @@ import { listAccountIds, resolveAccount } from "./accounts.js";
 import { shareCrmOnboardingAdapter } from "./onboarding.js";
 import {
   getActiveClient,
+  getBotInfo,
+  isAccountConnected,
   resolveDirectChatIdForUser,
   resolveDirectChatTargetForUser,
 } from "./monitor.js";
@@ -120,6 +122,24 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
               gatewayBaseUrl: { type: "string" },
               appId: { type: "string" },
               appSecret: { type: "string" },
+              dmPolicy: {
+                type: "string",
+                enum: ["open", "pairing", "allowlist", "disabled"],
+              },
+              allowFrom: {
+                type: "array",
+                items: { oneOf: [{ type: "string" }, { type: "number" }] },
+              },
+              groupPolicy: {
+                type: "string",
+                enum: ["open", "allowlist", "disabled"],
+              },
+              groupAllowFrom: {
+                type: "array",
+                items: { oneOf: [{ type: "string" }, { type: "number" }] },
+              },
+              historyLimit: { type: "integer", minimum: 0 },
+              textChunkLimit: { type: "integer", minimum: 1 },
             },
           },
         },
@@ -297,11 +317,12 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
       }
 
       const target = to.trim();
-      if (!target) {
+      const fallbackChatId = account.config?.chatId?.trim();
+      if (!target && !fallbackChatId) {
         throw new Error("ShareCRM: target is empty");
       }
 
-      let chatId = target;
+      let chatId = target || fallbackChatId || "";
       if (/^chat:/i.test(target)) {
         chatId = target.slice(5).trim();
       } else if (/^user:/i.test(target)) {
@@ -337,12 +358,20 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
       ...buildBaseChannelStatusSummary(snapshot),
     }),
     buildAccountSnapshot: ({ account, runtime }) => ({
+      ...(getBotInfo(account.accountId)
+        ? {
+            botFullId: getBotInfo(account.accountId)?.botFullId,
+            protocolVersion: getBotInfo(account.accountId)?.version ?? null,
+            maxLifetime: getBotInfo(account.accountId)?.maxLifetime ?? null,
+          }
+        : {}),
       accountId: account.accountId,
       enabled: account.enabled,
       configured: account.configured,
       name: account.name,
       gatewayBaseUrl: account.gatewayBaseUrl,
       appId: account.appId,
+      connected: isAccountConnected(account.accountId),
       running: runtime?.running ?? false,
       lastStartAt: runtime?.lastStartAt ?? null,
       lastStopAt: runtime?.lastStopAt ?? null,
