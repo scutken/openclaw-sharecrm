@@ -28,9 +28,9 @@ import org.springframework.web.bind.annotation.RestController;
 public class BotMessageController {
 
     private static final String COMMAND_HELP = String.join("\n",
-            "可用命令：",
-            "!userId - 返回当前发送人的 userId",
-            "!chatId - 返回当前会话的 chat_id"
+            "可用命令：", // ignoreI18n
+            "!userId - 返回当前发送人的 userId", // ignoreI18n
+            "!chatId - 返回当前会话的 chat_id" // ignoreI18n
     );
 
     private final SseSessionManager sessionManager;
