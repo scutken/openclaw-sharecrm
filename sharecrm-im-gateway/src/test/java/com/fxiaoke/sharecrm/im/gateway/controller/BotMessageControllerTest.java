@@ -4,6 +4,8 @@ import com.fxiaoke.sharecrm.im.gateway.TestReflectionHelper;
 import com.fxiaoke.sharecrm.im.gateway.common.Result;
 import com.fxiaoke.sharecrm.im.gateway.entity.Account;
 import com.fxiaoke.sharecrm.im.gateway.qixin.FromQixinMessage;
+import com.fxiaoke.sharecrm.im.gateway.qixin.QixinClient;
+import com.fxiaoke.sharecrm.im.gateway.qixin.ToQixinMessage;
 import com.fxiaoke.sharecrm.im.gateway.service.AccountService;
 import com.fxiaoke.sharecrm.im.gateway.sse.SseSessionManager;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,6 +32,9 @@ class BotMessageControllerTest {
 
     @Mock
     private AccountService accountService;
+
+    @Mock
+    private QixinClient qixinClient;
 
     @InjectMocks
     private BotMessageController controller;
@@ -101,5 +106,42 @@ class BotMessageControllerTest {
                 eq("direct"),
                 eq(message)
         );
+    }
+
+    @Test
+    void send_shouldReplyCommandHelpWithoutForwardingToBot() {
+        TestReflectionHelper.writeField(message, "messageContent", "!!");
+        when(accountService.findByBotFullId("fs", "B.fs.bot1")).thenReturn(Optional.of(account));
+
+        Result<Void> result = controller.send(message);
+
+        assertEquals(0, TestReflectionHelper.readField(result, "code"));
+        verify(sessionManager, never()).isOnline(any());
+        verify(sessionManager, never()).sendQixinMessageToBot(any(), any(), any(), any(), any(), any(), any());
+        verify(qixinClient).sendMessage(any(ToQixinMessage.class));
+    }
+
+    @Test
+    void send_shouldReplyUserIdCommandWithoutForwardingToBot() {
+        TestReflectionHelper.writeField(message, "messageContent", "!userId");
+        when(accountService.findByBotFullId("fs", "B.fs.bot1")).thenReturn(Optional.of(account));
+
+        Result<Void> result = controller.send(message);
+
+        assertEquals(0, TestReflectionHelper.readField(result, "code"));
+        verify(sessionManager, never()).sendQixinMessageToBot(any(), any(), any(), any(), any(), any(), any());
+        verify(qixinClient).sendMessage(any(ToQixinMessage.class));
+    }
+
+    @Test
+    void send_shouldReplyChatIdCommandWithoutForwardingToBot() {
+        TestReflectionHelper.writeField(message, "messageContent", "!chatId");
+        when(accountService.findByBotFullId("fs", "B.fs.bot1")).thenReturn(Optional.of(account));
+
+        Result<Void> result = controller.send(message);
+
+        assertEquals(0, TestReflectionHelper.readField(result, "code"));
+        verify(sessionManager, never()).sendQixinMessageToBot(any(), any(), any(), any(), any(), any(), any());
+        verify(qixinClient).sendMessage(any(ToQixinMessage.class));
     }
 }

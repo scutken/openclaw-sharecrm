@@ -3,6 +3,9 @@ package com.fxiaoke.sharecrm.im.gateway.controller;
 import com.fxiaoke.sharecrm.im.gateway.common.ErrorCode;
 import com.fxiaoke.sharecrm.im.gateway.common.Result;
 import com.fxiaoke.sharecrm.im.gateway.qixin.FromQixinMessage;
+import com.fxiaoke.sharecrm.im.gateway.qixin.QixinClient;
+import com.fxiaoke.sharecrm.im.gateway.qixin.QixinSessionId;
+import com.fxiaoke.sharecrm.im.gateway.qixin.ToQixinMessage;
 import com.fxiaoke.sharecrm.im.gateway.service.AccountService;
 import com.fxiaoke.sharecrm.im.gateway.sse.SseSessionManager;
 import lombok.RequiredArgsConstructor;
@@ -24,8 +27,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class BotMessageController {
 
+    private static final String COMMAND_HELP = String.join("\n",
+            "可用命令：",
+            "!userId - 返回当前发送人的 userId",
+            "!chatId - 返回当前会话的 chat_id"
+    );
+
     private final SseSessionManager sessionManager;
     private final AccountService accountService;
+    private final QixinClient qixinClient;
 
     /**
      * 发送消息给 Bot
@@ -58,14 +68,17 @@ public class BotMessageController {
         var account = accountOpt.get();
         String appId = account.getAppId();
         String ea = account.getEa();
+        String encodedChatId = message.encodeChatId();
+
+        if (handleGatewayCommand(message, account.getBotFullId(), ea, encodedChatId)) {
+            return Result.success();
+        }
 
         // 检查 Bot 是否在线（SSE）
         if (!sessionManager.isOnline(appId)) {
             log.warn("Bot offline: appId={}, botFullId={}", appId, message.getBotFullId());
             return Result.error(ErrorCode.BOT_NOT_CONNECTED);
         }
-
-        String encodedChatId = message.encodeChatId();
 
         if (message.getMessageType() == null) {
             message.setMessageType("T");
@@ -92,5 +105,37 @@ public class BotMessageController {
                 appId, encodedChatId, message.getMessageId());
 
         return Result.success();
+    }
+
+    private boolean handleGatewayCommand(FromQixinMessage message, String botFullId, String ea, String encodedChatId) {
+        String content = message.getMessageContent();
+        if (content == null) {
+            return false;
+        }
+
+        String normalized = content.trim();
+        if (normalized.isEmpty()) {
+            return false;
+        }
+
+        String replyText;
+        switch (normalized) {
+            case "!!":
+                replyText = COMMAND_HELP;
+                break;
+            case "!userId":
+                replyText = String.valueOf(message.extractUserId());
+                break;
+            case "!chatId":
+                replyText = encodedChatId;
+                break;
+            default:
+                return false;
+        }
+
+        QixinSessionId sessionId = QixinSessionId.of(message.getEnv(), ea, message.getSessionId(), message.getParentSessionId());
+        qixinClient.sendMessage(ToQixinMessage.from(botFullId, ea, sessionId, replyText, null));
+        log.info("[Gateway command handled] command={}, sessionId={}, sender={}", normalized, message.getSessionId(), message.getSenderFullId());
+        return true;
     }
 }
