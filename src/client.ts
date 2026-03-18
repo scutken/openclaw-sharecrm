@@ -19,7 +19,21 @@ import type {
 const RECONNECT_DELAY_MS = 3000;
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000; // 提前 5 分钟刷新 Token
 const MAX_LIFETIME_RECONNECT_BUFFER_MS = 5 * 1000;
+const SEND_RETRY_BASE_DELAY_MS = 1000;
+const SEND_RETRY_JITTER_RATIO = 0.2;
+const SEND_RETRY_MAX_ATTEMPTS = 2;
+const SEND_RECONNECT_WAIT_TIMEOUT_MS = 10_000;
+const SEND_RECONNECT_POLL_MS = 250;
 export const SHARECRM_GATEWAY_PROTOCOL_VERSION = "1.2.0";
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function computeRetryDelayMs(baseMs = SEND_RETRY_BASE_DELAY_MS, random = Math.random): number {
+  const jitter = 1 + random() * SEND_RETRY_JITTER_RATIO;
+  return Math.max(0, Math.round(baseMs * jitter));
+}
 
 export function buildSseUrl(gatewayBaseUrl: string, token: string, version = SHARECRM_GATEWAY_PROTOCOL_VERSION): URL {
   const url = new URL(gatewayBaseUrl.endsWith("/") ? gatewayBaseUrl : `${gatewayBaseUrl}/`);
@@ -54,6 +68,8 @@ export type ShareCrmClientOptions = {
   onDisconnected: (reason: string) => void;
   onError?: (error: Error) => void;
   log?: (...args: any[]) => void;
+  fetchImpl?: typeof fetch;
+  sleep?: (ms: number) => Promise<void>;
 };
 
 export class ShareCrmClient {
@@ -71,6 +87,14 @@ export class ShareCrmClient {
     this.options = options;
   }
 
+  private get fetchImpl(): typeof fetch {
+    return this.options.fetchImpl ?? fetch;
+  }
+
+  private get sleepImpl(): (ms: number) => Promise<void> {
+    return this.options.sleep ?? defaultSleep;
+  }
+
   get connected(): boolean {
     return this._connected;
   }
@@ -79,7 +103,7 @@ export class ShareCrmClient {
   private async fetchAccessToken(): Promise<string> {
     const { gatewayBaseUrl, appId, appSecret } = this.options.account;
 
-    const response = await fetch(`${gatewayBaseUrl}/im-gateway/auth/token`, {
+    const response = await this.fetchImpl(`${gatewayBaseUrl}/im-gateway/auth/token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ appId, appSecret }),
@@ -95,6 +119,11 @@ export class ShareCrmClient {
     this.tokenExpiresAt = Date.now() + data.data.expiresIn * 1000 - TOKEN_REFRESH_BUFFER_MS;
 
     return this.accessToken;
+  }
+
+  private invalidateToken(): void {
+    this.accessToken = null;
+    this.tokenExpiresAt = 0;
   }
 
   /** 确保 Token 有效 */
@@ -307,40 +336,87 @@ export class ShareCrmClient {
     }, reconnectInMs);
   }
 
+  private async waitForConnectionRecovery(timeoutMs = SEND_RECONNECT_WAIT_TIMEOUT_MS): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (this.connected) {
+        return true;
+      }
+      await this.sleepImpl(SEND_RECONNECT_POLL_MS);
+    }
+    return this.connected;
+  }
+
   /** 通过 REST API 发送消息到指定会话 */
   async sendMessage(
     chatId: string,
     text: string,
     options?: { replyMessageId?: string | number },
   ): Promise<{ messageId: string; chatId: string } | null> {
-    try {
-      const token = await this.ensureToken();
-      const { gatewayBaseUrl } = this.options.account;
-      const payload = buildSendMessagePayload(chatId, text, options);
+    const log = this.options.log ?? console.log;
+    const payload = buildSendMessagePayload(chatId, text, options);
 
-      const response = await fetch(`${gatewayBaseUrl}/im-gateway/qixin/message/send`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      });
+    for (let attempt = 1; attempt <= SEND_RETRY_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const token = await this.ensureToken();
+        const { gatewayBaseUrl } = this.options.account;
 
-      const data: SendMessageResponse = await response.json();
+        const response = await this.fetchImpl(`${gatewayBaseUrl}/im-gateway/qixin/message/send`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        });
 
-      if (data.code === 0 && data.data?.message_id) {
-        return { messageId: data.data.message_id, chatId };
+        const data: SendMessageResponse = await response.json();
+
+        if (data.code === 0 && data.data?.message_id) {
+          return { messageId: data.data.message_id, chatId };
+        }
+
+        if (attempt < SEND_RETRY_MAX_ATTEMPTS) {
+          if (data.code === 40100 || data.code === 40101) {
+            log(`sharecrm: 发送消息返回 ${data.code}，刷新 Token 后重试一次`);
+            this.invalidateToken();
+            await this.fetchAccessToken();
+            continue;
+          }
+
+          if (data.code === 50001) {
+            log(`sharecrm: Bot 当前未在线，等待 SSE 恢复后重试一次`);
+            const recovered = await this.waitForConnectionRecovery();
+            if (recovered) {
+              continue;
+            }
+            log(`sharecrm: SSE 未在重试窗口内恢复，取消发送重试`);
+          }
+
+          if (data.code === 50000) {
+            const delayMs = computeRetryDelayMs();
+            log(`sharecrm: 发送消息返回 50000，${delayMs}ms 后重试一次`);
+            await this.sleepImpl(delayMs);
+            continue;
+          }
+        }
+
+        log(`sharecrm: 发送消息失败: ${data.msg || "未知错误"}`);
+        return null;
+      } catch (err) {
+        if (attempt < SEND_RETRY_MAX_ATTEMPTS) {
+          const delayMs = computeRetryDelayMs();
+          log(`sharecrm: 发送消息异常，将在 ${delayMs}ms 后重试一次: ${String(err)}`);
+          await this.sleepImpl(delayMs);
+          continue;
+        }
+
+        log(`sharecrm: 发送消息异常: ${String(err)}`);
+        return null;
       }
-
-      const log = this.options.log ?? console.log;
-      log(`sharecrm: 发送消息失败: ${data.msg || "未知错误"}`);
-      return null;
-    } catch (err) {
-      const log = this.options.log ?? console.log;
-      log(`sharecrm: 发送消息异常: ${String(err)}`);
-      return null;
     }
+
+    return null;
   }
 
   /** 安排重连尝试 */
