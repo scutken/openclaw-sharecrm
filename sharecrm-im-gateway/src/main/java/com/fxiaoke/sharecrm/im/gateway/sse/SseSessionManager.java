@@ -3,17 +3,19 @@ package com.fxiaoke.sharecrm.im.gateway.sse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fxiaoke.sharecrm.im.gateway.qixin.FromQixinMessage;
 import com.fxiaoke.sharecrm.im.gateway.sse.SsePayloads.ToBotMessage;
-import com.fxiaoke.sharecrm.im.gateway.sse.SsePayloads.Ping;
+import com.fxiaoke.sharecrm.im.gateway.sse.SsePayloads.Reset;
 import com.fxiaoke.sharecrm.im.gateway.sse.SsePayloads.SenderInfo;
 import com.fxiaoke.sharecrm.im.gateway.sse.SsePayloads.TextMessage;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -30,26 +32,32 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class SseSessionManager {
+
+    private static final String DEFAULT_CLIENT_VERSION = "v1.0.0";
+    private static final String MIN_VERSION_FOR_NEW_PROTOCOL = "1.2.0";
 
     private final ObjectMapper objectMapper;
 
-    /**
-     * Bot SSE 会话 (appId -> SseEmitter)
-     */
-    private final Map<String, SseEmitter> botEmitters = new ConcurrentHashMap<>();
+    public SseSessionManager(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
+    @Value("${sse.max-lifetime:1800000}")
+    private long sseMaxLifetime = 1800000L;
+
+    @Value("${sse.replay-limit:200}")
+    private int replayLimit = 200;
 
     /**
-     * Bot 客户端版本 (appId -> version)
-     * 用于决定消息格式
+     * Bot SSE 会话
      */
-    private final Map<String, String> botVersions = new ConcurrentHashMap<>();
+    private final Map<String, BotSession> botSessions = new ConcurrentHashMap<>();
 
     /**
-     * 最低支持新协议格式的版本（v1.2.0）
+     * 每个 appId 最近可重放的消息事件
      */
-    private static final String MIN_VERSION_FOR_NEW_PROTOCOL = "1.2.0";
+    private final Map<String, Deque<ReplayEvent>> replayBuffers = new ConcurrentHashMap<>();
 
     /**
      * 注册 Bot SSE 连接
@@ -59,7 +67,7 @@ public class SseSessionManager {
      * @return 是否成功注册（如果返回 false 表示新连接替换了旧连接）
      */
     public boolean registerBot(String appId, SseEmitter emitter) {
-        return registerBot(appId, emitter, "v1.0.0");
+        return registerBot(appId, emitter, DEFAULT_CLIENT_VERSION);
     }
 
     /**
@@ -71,47 +79,79 @@ public class SseSessionManager {
      * @return 是否成功注册（如果返回 false 表示新连接替换了旧连接）
      */
     public boolean registerBot(String appId, SseEmitter emitter, String version) {
-        SseEmitter existing = botEmitters.put(appId, emitter);
-        boolean replaced = existing != null;
-
-        // 存储客户端版本
-        String normalizedVersion = version != null ? version : "v1.0.0";
-        botVersions.put(appId, normalizedVersion);
+        String normalizedVersion = version != null ? version : DEFAULT_CLIENT_VERSION;
+        BotSession newSession = new BotSession(emitter, normalizedVersion, System.currentTimeMillis());
+        BotSession existingSession = botSessions.put(appId, newSession);
+        boolean replaced = existingSession != null;
 
         if (replaced) {
             log.warn("Replacing existing Bot SSE connection: appId={}", appId);
-            existing.complete(); // 断开旧连接
+            existingSession.emitter.complete();
         }
 
-        // 连接关闭时清理
         emitter.onCompletion(() -> {
             log.info("Bot SSE connection completed: appId={}", appId);
-            botEmitters.remove(appId, emitter);
-            botVersions.remove(appId);
+            botSessions.remove(appId, newSession);
         });
 
         emitter.onTimeout(() -> {
             log.warn("Bot SSE connection timeout: appId={}", appId);
-            botEmitters.remove(appId, emitter);
-            botVersions.remove(appId);
+            botSessions.remove(appId, newSession);
         });
 
         emitter.onError((e) -> {
             log.error("Bot SSE connection error: appId={}, error={}", appId, e.getMessage());
-            botEmitters.remove(appId, emitter);
-            botVersions.remove(appId);
+            botSessions.remove(appId, newSession);
         });
 
         log.info("Bot SSE session registered: appId={}, version={}", appId, normalizedVersion);
         return !replaced;
     }
 
+    public void replayMissedEvents(String appId, SseEmitter emitter, String lastEventId, String version) throws IOException {
+        if (!isNewProtocolVersion(version) || lastEventId == null || lastEventId.isBlank()) {
+            return;
+        }
+
+        Deque<ReplayEvent> buffer = replayBuffers.get(appId);
+        if (buffer == null || buffer.isEmpty()) {
+            sendReset(emitter, "cursor_expired");
+            return;
+        }
+
+        boolean found = false;
+        for (ReplayEvent event : buffer) {
+            if (found) {
+                emitter.send(SseEmitter.event()
+                        .id(event.eventId)
+                        .name(event.eventName)
+                        .data(event.payload));
+            } else if (event.eventId.equals(lastEventId)) {
+                found = true;
+            }
+        }
+
+        if (!found) {
+            sendReset(emitter, "cursor_expired");
+        }
+    }
+
+    private void sendReset(SseEmitter emitter, String reason) throws IOException {
+        emitter.send(SseEmitter.event()
+                .name("reset")
+                .data(Reset.builder()
+                        .type("reset")
+                        .reason(reason)
+                        .build()));
+    }
+
     /**
      * 注销 Bot SSE 连接
      */
     public void unregisterBot(String appId) {
-        SseEmitter removed = botEmitters.remove(appId);
+        BotSession removed = botSessions.remove(appId);
         if (removed != null) {
+            removed.emitter.complete();
             log.info("Bot SSE session unregistered: appId={}", appId);
         }
     }
@@ -120,30 +160,34 @@ public class SseSessionManager {
      * 获取 Bot SSE 连接
      */
     public Optional<SseEmitter> getBotEmitter(String appId) {
-        return Optional.ofNullable(botEmitters.get(appId));
+        return Optional.ofNullable(botSessions.get(appId)).map(session -> session.emitter);
     }
 
     /**
      * 检查 Bot 是否在线
      */
     public boolean isOnline(String appId) {
-        return botEmitters.containsKey(appId);
+        return botSessions.containsKey(appId);
     }
 
     /**
      * 获取 Bot 在线数量
      */
     public int getBotOnlineCount() {
-        return botEmitters.size();
+        return botSessions.size();
     }
 
     /**
      * 检查客户端版本是否支持新协议格式 (>= v1.2.0)
      */
     private boolean isNewProtocol(String appId) {
-        String version = botVersions.get(appId);
+        BotSession session = botSessions.get(appId);
+        return session != null && isNewProtocolVersion(session.clientVersion);
+    }
+
+    private boolean isNewProtocolVersion(String version) {
         if (version == null) {
-            return false; // 默认旧协议
+            return false;
         }
         return isVersionGreaterOrEqual(version, MIN_VERSION_FOR_NEW_PROTOCOL);
     }
@@ -189,7 +233,7 @@ public class SseSessionManager {
      * 获取所有在线 Bot 的 appId 列表
      */
     public List<String> getBotAppIds() {
-        return new ArrayList<>(botEmitters.keySet());
+        return new ArrayList<>(botSessions.keySet());
     }
 
     /**
@@ -267,11 +311,18 @@ public class SseSessionManager {
                     sseMessage = SseMessage.of("message", data);
                 }
 
-                String json = objectMapper.writeValueAsString(sseMessage);
-
-                emitter.send(SseEmitter.event()
+                SseEmitter.SseEventBuilder builder = SseEmitter.event()
                         .name("message")
-                        .data(json));
+                        .data(sseMessage);
+                if (qixinMessageId != null) {
+                    String eventId = String.valueOf(qixinMessageId);
+                    builder.id(eventId);
+                    if (useNewProtocol) {
+                        appendReplayEvent(appId, eventId, "message", sseMessage);
+                    }
+                }
+
+                emitter.send(builder);
 
                 log.debug("Qixin message sent to Bot via SSE: appId={}, chatId={}, newProtocol={}",
                         appId, chatId, useNewProtocol);
@@ -287,29 +338,57 @@ public class SseSessionManager {
      */
     @Scheduled(fixedRate = 30000) // 每 30 秒
     public void sendHeartbeat() {
-        long now = System.currentTimeMillis();
-        // 复制一份 key 列表，避免并发修改问题
-        List<String> appIds = new ArrayList<>(botEmitters.keySet());
+        List<String> appIds = new ArrayList<>(botSessions.keySet());
         for (String appId : appIds) {
-            SseEmitter emitter = botEmitters.get(appId);
-            if (emitter == null) {
+            BotSession session = botSessions.get(appId);
+            if (session == null) {
                 continue; // 连接已被移除，跳过
             }
             try {
-                emitter.send(SseEmitter.event()
-                        .name("ping")
-                        .data(Ping.builder()
-                                .type("ping")
-                                .time(now / 1000)
-                                .build()));
+                session.emitter.send(SseEmitter.event().comment("keepalive"));
             } catch (IOException e) {
-                // 忽略 Broken pipe 等连接断开异常，避免打印 ERROR 日志
-                // 这类异常说明客户端已断开，onError 回调会处理清理
                 log.debug("Heartbeat failed (connection closed): appId={}, error={}", appId, e.getMessage());
                 unregisterBot(appId);
             } catch (Exception e) {
                 log.warn("Failed to send heartbeat to appId={}, error={}", appId, e.getMessage());
                 unregisterBot(appId);
+            }
+        }
+    }
+
+    @Scheduled(fixedRate = 30000)
+    public void disconnectExpiredSessions() {
+        if (sseMaxLifetime <= 0) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        for (Map.Entry<String, BotSession> entry : new ArrayList<>(botSessions.entrySet())) {
+            String appId = entry.getKey();
+            BotSession session = entry.getValue();
+            if (session == null) {
+                continue;
+            }
+            if (now - session.connectedAt < sseMaxLifetime) {
+                continue;
+            }
+
+            log.info("Closing expired Bot SSE connection: appId={}, connectedAt={}, maxLifetime={}ms",
+                    appId, session.connectedAt, sseMaxLifetime);
+            botSessions.remove(appId, session);
+            session.emitter.complete();
+        }
+    }
+
+    private void appendReplayEvent(String appId, String eventId, String eventName, Object payload) {
+        Deque<ReplayEvent> buffer = replayBuffers.computeIfAbsent(appId, key -> new LinkedList<>());
+        synchronized (buffer) {
+            if (!buffer.isEmpty() && buffer.getLast().eventId.equals(eventId)) {
+                return;
+            }
+            buffer.addLast(new ReplayEvent(eventId, eventName, payload));
+            while (buffer.size() > replayLimit) {
+                buffer.removeFirst();
             }
         }
     }
@@ -323,5 +402,11 @@ public class SseSessionManager {
             return "direct";
         }
         return ("group".equals(normalized) || "channel".equals(normalized)) ? "group" : "direct";
+    }
+
+    private record BotSession(SseEmitter emitter, String clientVersion, long connectedAt) {
+    }
+
+    private record ReplayEvent(String eventId, String eventName, Object payload) {
     }
 }

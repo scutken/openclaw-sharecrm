@@ -1,7 +1,6 @@
 package com.fxiaoke.sharecrm.im.gateway.controller.open;
 
 import cn.hutool.core.thread.ThreadUtil;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fxiaoke.sharecrm.im.gateway.entity.Account;
 import com.fxiaoke.sharecrm.im.gateway.service.AuthException;
 import com.fxiaoke.sharecrm.im.gateway.service.AuthService;
@@ -14,6 +13,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -29,7 +29,8 @@ import java.io.IOException;
  * <p>
  * 协议说明：
  * - 连接即鉴权，token 放 URL query param
- * - 事件类型: connected, ping, message, error
+ * - 事件类型: connected, message, reset
+ * - 心跳使用 SSE comment，不作为业务事件下发
  * - 单设备限制，新连接会断开旧连接
  */
 @Slf4j
@@ -41,45 +42,35 @@ public class BotSseController {
     private final SseSessionManager sseSessionManager;
 
     /**
-     * SSE 连接超时时间（毫秒）
-     * 默认 5 分钟，0 表示永不超时
-     */
-    @Value("${sse.timeout:300000}")
-    private long sseTimeout;
-
-    /**
      * SSE 连接最大存活时间（毫秒）
-     * 超过此时间后连接自动断开，强制重连
+     * 超过此时间后服务端主动断开，客户端应按标准机制重连
      * 默认 30 分钟
      */
     @Value("${sse.max-lifetime:1800000}")
     private long sseMaxLifetime;
 
     /**
-     * 最低支持超时功能的版本（v1.2.0）
+     * 服务端建议重连延迟（毫秒）
      */
-    private static final String MIN_VERSION_FOR_TIMEOUT = "1.2.0";
+    @Value("${sse.retry-delay:1000}")
+    private long sseRetryDelay;
+
+    private static final String DEFAULT_CLIENT_VERSION = "v1.0.0";
+    private static final String CURRENT_PROTOCOL_VERSION = "1.2.0";
 
     /**
      * Bot SSE 连接端点
      *
      * @param token    AccessToken
-     * @param version  插件版本（可选），默认为 v1.0.0，>= v1.2.0 启用超时
+     * @param version  插件版本（可选），默认为 v1.0.0
      * @return SseEmitter
      */
     @GetMapping(value = "/bot/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter connect(
             @RequestParam("token") String token,
-            @RequestParam(value = "version", required = false, defaultValue = "v1.0.0") String version) {
+            @RequestParam(value = "version", required = false, defaultValue = DEFAULT_CLIENT_VERSION) String version,
+            @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId) {
         log.debug("Bot SSE connection request, version={}", version);
-
-        // 解析版本号，判断是否启用超时
-        boolean enableTimeout = isVersionGreaterOrEqual(version, MIN_VERSION_FOR_TIMEOUT);
-        log.info("Plugin version: {}, enableTimeout: {}", version, enableTimeout);
-
-        // 根据版本决定超时配置
-        long effectiveTimeout = enableTimeout ? sseTimeout : 0L;
-        long effectiveMaxLifetime = enableTimeout ? sseMaxLifetime : 0L;
 
         if (token == null || token.isEmpty()) {
             log.warn("SSE connection failed: empty token");
@@ -105,27 +96,30 @@ public class BotSseController {
             // 不直接拒绝，让 registerBot 去断开旧连接
         }
 
-        // 创建 SSE Emitter，使用配置的超时时间
-        SseEmitter emitter = new SseEmitter(effectiveTimeout);
+        // SSE 连接本身不设置 async timeout，生命周期由 max_lifetime 与客户端重连机制控制
+        SseEmitter emitter = new SseEmitter(0L);
 
         ThreadUtil.execute(() -> {
                     // 注册会话，传递客户端版本
                     boolean isNew = sseSessionManager.registerBot(appId, emitter, version);
 
-                    // 发送 connected 事件
                     try {
                         emitter.send(SseEmitter.event()
+                                .reconnectTime(sseRetryDelay)
                                 .name("connected")
                                 .data(Connected.builder()
                                         .type("connected")
                                         .data(ConnectedData.builder()
                                                 .botFullId(account.getBotFullId())
-                                                .version(version)
-                                                .maxLifetime(effectiveMaxLifetime)
+                                                .protocolVersion(CURRENT_PROTOCOL_VERSION)
+                                                .clientVersion(version)
+                                                .maxLifetime(sseMaxLifetime)
+                                                .retry(sseRetryDelay)
                                                 .build())
                                         .build()));
-                        log.info("Bot SSE connected: appId={}, isNew={}, version={}, timeout={}ms, maxLifetime={}ms",
-                                appId, isNew, version, effectiveTimeout, effectiveMaxLifetime);
+                        sseSessionManager.replayMissedEvents(appId, emitter, lastEventId, version);
+                        log.info("Bot SSE connected: appId={}, isNew={}, version={}, maxLifetime={}ms, lastEventId={}",
+                                appId, isNew, version, sseMaxLifetime, lastEventId);
                     } catch (IOException e) {
                         log.error("Failed to send connected event: appId={}", appId);
                         sseSessionManager.unregisterBot(appId);
@@ -134,45 +128,5 @@ public class BotSseController {
                 }
         );
         return emitter;
-    }
-
-    /**
-     * 比较版本号，判断 currentVersion >= minVersion
-     * 支持格式：v1.0.0, 1.0.0, v1.2.0, 1.2.0
-     */
-    private boolean isVersionGreaterOrEqual(String currentVersion, String minVersion) {
-        try {
-            // 去除 v 前缀
-            String current = currentVersion.replaceFirst("^v", "");
-            String min = minVersion.replaceFirst("^v", "");
-
-            String[] currentParts = current.split("\\.");
-            String[] minParts = min.split("\\.");
-
-            int maxLen = Math.max(currentParts.length, minParts.length);
-
-            for (int i = 0; i < maxLen; i++) {
-                int currentPart = i < currentParts.length ? parseIntSafe(currentParts[i]) : 0;
-                int minPart = i < minParts.length ? parseIntSafe(minParts[i]) : 0;
-
-                if (currentPart > minPart) {
-                    return true;
-                } else if (currentPart < minPart) {
-                    return false;
-                }
-            }
-            return true;
-        } catch (Exception e) {
-            log.warn("Failed to parse version: current={}, min={}, default to false", currentVersion, minVersion);
-            return false;
-        }
-    }
-
-    private int parseIntSafe(String s) {
-        try {
-            return Integer.parseInt(s.replaceAll("[^0-9].*", ""));
-        } catch (NumberFormatException e) {
-            return 0;
-        }
     }
 }

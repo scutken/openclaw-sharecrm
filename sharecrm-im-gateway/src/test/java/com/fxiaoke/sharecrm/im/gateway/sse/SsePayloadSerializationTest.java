@@ -23,16 +23,20 @@ class SsePayloadSerializationTest {
         SsePayloads.ConnectedData data = new SsePayloads.ConnectedData();
         writeField(connected, "type", "connected");
         writeField(data, "botFullId", "B.fs.bot-demo");
-        writeField(data, "version", "1.2.0");
+        writeField(data, "protocolVersion", "1.2.0");
+        writeField(data, "clientVersion", "1.2.1");
         writeField(data, "maxLifetime", 1800000L);
+        writeField(data, "retry", 1000L);
         writeField(connected, "data", data);
 
         JsonNode json = objectMapper.readTree(objectMapper.writeValueAsString(connected));
 
         assertEquals("connected", json.get("type").asText());
         assertEquals("B.fs.bot-demo", json.path("data").path("bot_full_id").asText());
-        assertEquals("1.2.0", json.path("data").path("version").asText());
+        assertEquals("1.2.0", json.path("data").path("protocol_version").asText());
+        assertEquals("1.2.1", json.path("data").path("client_version").asText());
         assertEquals(1800000L, json.path("data").path("max_lifetime").asLong());
+        assertEquals(1000L, json.path("data").path("retry").asLong());
         assertFalse(json.path("data").has("bot_id"));
     }
 

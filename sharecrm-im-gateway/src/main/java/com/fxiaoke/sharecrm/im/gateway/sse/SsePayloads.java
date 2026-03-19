@@ -32,19 +32,26 @@ public final class SsePayloads {
         @JsonProperty("bot_full_id")
         private String botFullId;
 
-        private String version;
+        @JsonProperty("protocol_version")
+        private String protocolVersion;
+
+        @JsonProperty("client_version")
+        private String clientVersion;
 
         @JsonProperty("max_lifetime")
         private long maxLifetime;
+
+        private long retry;
     }
 
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class Ping {
+    public static class Reset {
         private String type;
-        private long time;
+
+        private String reason;
     }
 
     @Data

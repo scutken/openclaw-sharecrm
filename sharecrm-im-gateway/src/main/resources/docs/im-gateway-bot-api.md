@@ -144,6 +144,7 @@ Bot 通过该接口与 Gateway 建立单向事件流，用于接收连接确认�
 ```http
 GET /im-gateway/bot/events?token={accessToken}&version=1.2.0
 Accept: text/event-stream
+Last-Event-ID: 123456789
 ```
 
 查询参数：
@@ -153,23 +154,40 @@ Accept: text/event-stream
 | `token` | string | 是 | 通过 `/im-gateway/auth/token` 获取的 AccessToken |
 | `version` | string | 否 | Bot 插件版本。建议传 `1.2.0` 或更高版本，以启用 v1.2 消息结构 |
 
+请求头说明：
+
+| 请求头 | 必填 | 说明 |
+|---|---|---|
+| `Last-Event-ID` | 否 | 断线重连时用于从最近一条已消费事件继续恢复；浏览器 `EventSource` 会自动带上，非浏览器客户端需要自行保存并回传 |
+
 ### 5.2 连接行为
 
 - 连接即鉴权，鉴权失败会直接返回 `401`
 - 同一个 `appId` 仅允许一个活跃连接，新连接会替换旧连接
-- 当 `version >= 1.2.0` 时：
-  - 服务端会启用 SSE 超时配置
-  - `connected` 事件中返回 `max_lifetime`
-  - `message` 事件返回 v1.2 结构字段
-- 心跳事件默认每 30 秒发送一次
+- SSE 连接本身不依赖 Spring async timeout 轮换；默认保持长连接
+- 服务端会在 `connected` 事件中返回：
+  - `protocol_version`：当前 SSE 协议版本
+  - `client_version`：本次建连时传入的插件版本
+  - `retry`：建议重连等待时间（毫秒）
+  - `max_lifetime`：连接最大存活时间（毫秒）
+- 服务端会在达到 `max_lifetime` 后主动关闭连接，客户端应按标准 SSE 重连机制自动重连
+- 服务端默认每 30 秒发送一次 **SSE comment 心跳**（不是业务事件），用于防止代理/LB 空闲断连
+- `message` 事件会附带标准 SSE `id` 字段；断线重连时，客户端可基于 `Last-Event-ID` 请求增量恢复
+- 当前业务消息体格式保持不变，因此不影响既有 1.1 插件对 `message.data` 的解析兼容
 
 ### 5.3 事件类型
 
 | 事件名 | 说明 |
 |---|---|
 | `connected` | 建连成功后的首个事件 |
-| `ping` | 心跳事件 |
 | `message` | 来自企信的消息事件 |
+| `reset` | 服务端无法按 `Last-Event-ID` 补发时返回，提示客户端清空游标并直接重连 |
+
+补充：心跳使用 SSE comment，例如：
+
+```text
+: keepalive
+```
 
 ---
 
@@ -183,7 +201,8 @@ Accept: text/event-stream
 
 ```text
 event: connected
-data: {"type":"connected","data":{"bot_full_id":"B.fs.bot_demo","version":"1.2.0","max_lifetime":1800000}}
+retry: 1000
+data: {"type":"connected","data":{"bot_full_id":"B.fs.bot_demo","protocol_version":"1.2.0","client_version":"1.2.0","max_lifetime":1800000,"retry":1000}}
 ```
 
 说明：`connected.data.bot_full_id` 是 Bot 在企信侧的完整 ID。
@@ -195,8 +214,10 @@ JSON 结构：
   "type": "connected",
   "data": {
     "bot_full_id": "B.fs.bot_demo",
-    "version": "1.2.0",
-    "max_lifetime": 1800000
+    "protocol_version": "1.2.0",
+    "client_version": "1.2.0",
+    "max_lifetime": 1800000,
+    "retry": 1000
   }
 }
 ```
@@ -207,35 +228,25 @@ JSON 结构：
 |---|---|---|
 | `type` | string | 固定为 `connected` |
 | `data.bot_full_id` | string | Bot 在企信侧的完整 ID，例如 `B.fs.bot_demo` |
-| `data.version` | string | 建连时传入的插件版本 |
+| `data.protocol_version` | string | 当前 SSE 协议版本 |
+| `data.client_version` | string | 建连时传入的插件版本 |
 | `data.max_lifetime` | long | 连接最大存活时间，单位毫秒 |
+| `data.retry` | long | 服务端建议的重连等待时间，单位毫秒 |
 
-## 6.2 ping
+## 6.2 heartbeat（SSE comment）
 
-事件名：`ping`
+心跳不是业务事件，不会触发 `message` / `addEventListener("...")` 回调。
 
 示例：
 
 ```text
-event: ping
-data: {"type":"ping","time":1710000000}
+: keepalive
 ```
 
-JSON 结构：
+说明：
 
-```json
-{
-  "type": "ping",
-  "time": 1710000000
-}
-```
-
-字段说明：
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `type` | string | 固定为 `ping` |
-| `time` | long | 服务端当前 Unix 时间戳，单位秒 |
+- 心跳仅用于维持链路活性，避免中间代理/负载均衡按空闲连接回收
+- 客户端不应把心跳当作业务消息处理
 
 ## 6.3 message（Gateway v1.2 推荐接入格式）
 
@@ -244,6 +255,7 @@ JSON 结构：
 当 Bot 建连时传入 `version >= 1.2.0`，当前实现会发送如下结构：
 
 ```text
+id: 123456789
 event: message
 data: {"type":"message","version":"1.0","data":{"message_id":"123456789","chat_id":"0:fs:session123:","chat_type":"direct","from":{"id":"7618","name":"7618"},"text":"你好","date":1710000000,"message":{"type":"text","content":"你好"},"timestamp":1710000000,"env":0,"ea":"fs","session_id":"session123","parent_session_id":null,"bot_full_id":"B.fs.bot_demo","message_type":"T","reply_message_id":null}}
 ```
@@ -290,6 +302,12 @@ JSON 结构：
 | `version` | string | 当前实现中固定返回 `1.0`；请以 `data` 的字段结构作为解析依据 |
 | `data` | object | 消息体 |
 
+SSE 帧字段补充：
+
+| 字段 | 说明 |
+|---|---|
+| `id` | 事件唯一标识；当前实现默认使用企信消息 ID，供 `Last-Event-ID` 增量恢复使用 |
+
 ### data 字段
 
 | 字段 | 类型 | 说明 |
@@ -312,7 +330,42 @@ JSON 结构：
 | `message_type` | string | 企信原始消息类型，如 `T` |
 | `reply_message_id` | long/null | 如果该消息为回复消息，则为被回复消息 ID |
 
-### 6.4 `chat_id` 说明
+## 6.4 reset
+
+事件名：`reset`
+
+当客户端带来的 `Last-Event-ID` 无法在服务端当前保留窗口内恢复时，服务端会发送该事件。
+
+示例：
+
+```text
+event: reset
+data: {"type":"reset","reason":"cursor_expired"}
+```
+
+JSON 结构：
+
+```json
+{
+  "type": "reset",
+  "reason": "cursor_expired"
+}
+```
+
+字段说明：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `type` | string | 固定为 `reset` |
+| `reason` | string | 当前可取 `cursor_expired`，表示客户端游标已过期，无法恢复断线期间的历史消息 |
+
+客户端建议：
+
+- 清空本地事件游标
+- 立即重新建立 SSE 连接
+- 记录一条告警日志：本次重连无法恢复断线期间的历史消息，此前消息可能未被接收
+
+### 6.5 `chat_id` 说明
 
 `chat_id` 由 Gateway 编码生成，格式如下：
 
@@ -454,9 +507,10 @@ Authorization: Bearer {accessToken}
 1. Bot 调用 POST /im-gateway/auth/token 获取 accessToken
 2. Bot 使用 GET /im-gateway/bot/events?token=...&version=1.2.0 建立 SSE 连接
 3. Bot 接收 connected 事件，确认连接建立
-4. Bot 持续接收 ping 心跳和 message 消息事件
-5. Bot 处理 message.data，并保留 chat_id
-6. Bot 调用 POST /im-gateway/qixin/message/send 回复企信消息
+4. Bot 持续接收 SSE comment 心跳和 message 消息事件
+5. Bot 保存最近成功消费的事件 ID（浏览器 `EventSource` 可自动处理）
+6. Bot 处理 message.data，并保留 chat_id
+7. Bot 调用 POST /im-gateway/qixin/message/send 回复企信消息
 ```
 
 ---
@@ -464,6 +518,8 @@ Authorization: Bearer {accessToken}
 ## 11. 接入建议
 
 - 建连时始终传 `version=1.2.0` 或更高版本
+- 非浏览器客户端建议显式保存最近一条 `message` 事件的 `id`，重连时通过 `Last-Event-ID` 带回
+- 优先遵循服务端返回的 `retry` 重连等待时间
 - 回复时直接复用 `message.data.chat_id`
 - 不要尝试只根据 `from.id` 直接调用发送接口
 - `message.text` 可用于快速兼容；推荐优先使用 `message.message.content`
@@ -497,11 +553,11 @@ Authorization: Bearer {accessToken}
 
 建议策略：
 
-- 发生网络中断、读超时、服务端主动断开、服务端 `5xx` 时，应主动重连
+- 发生网络中断、服务端主动断开、服务端 `5xx` 时，应主动重连
 - 如果建连返回 `401`，建议先重新获取 Token，再重新建立 SSE 连接
-- 不建议无间隔高频重连
-- 建议使用指数退避：`1s`、`2s`、`4s`、`8s`、`16s`，之后封顶为 `30s`
-- 每次重连建议附加 `0% ~ 20%` 的随机抖动
+- 优先遵循服务端下发的 `retry` 值；如果服务端未下发，可使用 `1s` 起步并逐步退避
+- 如果是 `max_lifetime` 到期前后的主动轮换，可直接按 `retry` 或更短延迟快速重连
+- 如果客户端保存了事件游标，重连时应带上 `Last-Event-ID`
 - 同一 `appId` 仅保留一个活跃连接，避免多个实例反复互相顶掉连接
 
 ### 11.4 发送消息失败重试建议

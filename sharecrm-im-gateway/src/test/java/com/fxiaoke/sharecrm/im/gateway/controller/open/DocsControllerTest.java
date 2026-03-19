@@ -30,6 +30,7 @@ class DocsControllerTest {
         ResponseEntity<String> response = controller.botApiMarkdown();
 
         assertEquals("text/markdown;charset=UTF-8", String.valueOf(response.getHeaders().getContentType()));
-        assertTrue(String.valueOf(response.getBody()).contains("## 11. 重试与重连策略"));
+        assertTrue(String.valueOf(response.getBody()).contains("## 5. SSE 长连接"));
+        assertTrue(String.valueOf(response.getBody()).contains("## 6. SSE 事件结构"));
     }
 }

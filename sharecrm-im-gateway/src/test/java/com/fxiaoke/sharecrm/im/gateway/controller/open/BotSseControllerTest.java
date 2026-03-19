@@ -46,13 +46,13 @@ class BotSseControllerTest {
         TestReflectionHelper.writeField(account, "appSecret", "secret-1");
         TestReflectionHelper.writeField(account, "botFullId", "B.fs.bot1");
         TestReflectionHelper.writeField(account, "enabled", true);
-        ReflectionTestUtils.setField(controller, "sseTimeout", 300000L);
         ReflectionTestUtils.setField(controller, "sseMaxLifetime", 1800000L);
+        ReflectionTestUtils.setField(controller, "sseRetryDelay", 1000L);
     }
 
     @Test
     void connect_shouldRejectMissingToken() {
-        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> controller.connect("", "1.2.0"));
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> controller.connect("", "1.2.0", null));
         assertEquals(401, ex.getStatus().value());
     }
 
@@ -60,7 +60,7 @@ class BotSseControllerTest {
     void connect_shouldRejectInvalidToken() {
         when(authService.validateAccessToken("token")).thenThrow(new AuthException("TOKEN_INVALID", "Invalid token"));
 
-        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> controller.connect("token", "1.2.0"));
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> controller.connect("token", "1.2.0", null));
         assertEquals(401, ex.getStatus().value());
     }
 
@@ -69,7 +69,7 @@ class BotSseControllerTest {
         when(authService.validateAccessToken("token")).thenReturn(account);
         when(sseSessionManager.registerBot(eq("app-1"), any(SseEmitter.class), eq("1.2.0"))).thenReturn(true);
 
-        SseEmitter emitter = controller.connect("token", "1.2.0");
+        SseEmitter emitter = controller.connect("token", "1.2.0", null);
 
         assertNotNull(emitter);
         verify(sseSessionManager, timeout(500)).registerBot(eq("app-1"), any(SseEmitter.class), eq("1.2.0"));
@@ -79,7 +79,7 @@ class BotSseControllerTest {
     void connect_shouldUseZeroTimeoutForLegacyVersion() {
         when(authService.validateAccessToken("token")).thenReturn(account);
 
-        SseEmitter emitter = controller.connect("token", "v1.0.0");
+        SseEmitter emitter = controller.connect("token", "v1.0.0", null);
 
         assertNotNull(emitter);
         assertEquals(0L, emitter.getTimeout());

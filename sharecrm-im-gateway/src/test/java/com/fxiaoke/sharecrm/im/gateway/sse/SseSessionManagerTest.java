@@ -5,6 +5,7 @@ import com.fxiaoke.sharecrm.im.gateway.TestReflectionHelper;
 import com.fxiaoke.sharecrm.im.gateway.qixin.FromQixinMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -18,11 +19,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SseSessionManagerTest {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     private SseSessionManager sessionManager;
 
     @BeforeEach
     void setUp() {
         sessionManager = new SseSessionManager(new ObjectMapper());
+        ReflectionTestUtils.setField(sessionManager, "sseMaxLifetime", 1800000L);
+        ReflectionTestUtils.setField(sessionManager, "replayLimit", 10);
     }
 
     @Test
@@ -73,6 +78,46 @@ class SseSessionManagerTest {
     }
 
     @Test
+    void replayMissedEvents_shouldReplayMessagesAfterLastEventId() throws Exception {
+        CapturingEmitter emitter = new CapturingEmitter();
+        sessionManager.registerBot("modern", emitter, "1.2.0");
+
+        FromQixinMessage first = new FromQixinMessage();
+        TestReflectionHelper.writeField(first, "messageId", 100L);
+        TestReflectionHelper.writeField(first, "messageTimestamp", 1710000000000L);
+        FromQixinMessage second = new FromQixinMessage();
+        TestReflectionHelper.writeField(second, "messageId", 101L);
+        TestReflectionHelper.writeField(second, "messageTimestamp", 1710000001000L);
+
+        sessionManager.sendQixinMessageToBot("modern", "0:fs:session:", "one", "7618", "Alice", "direct", first);
+        sessionManager.sendQixinMessageToBot("modern", "0:fs:session:", "two", "7618", "Alice", "direct", second);
+
+        CapturingEmitter replayEmitter = new CapturingEmitter();
+        sessionManager.replayMissedEvents("modern", replayEmitter, "100", "1.2.0");
+
+        assertEquals(1, replayEmitter.messages.size());
+        assertTrue(replayEmitter.messages.getFirst().contains("\"message_id\":\"101\""));
+    }
+
+    @Test
+    void replayMissedEvents_shouldSendResetWhenCursorUnknown() throws Exception {
+        CapturingEmitter emitter = new CapturingEmitter();
+        sessionManager.registerBot("modern", emitter, "1.2.0");
+
+        FromQixinMessage first = new FromQixinMessage();
+        TestReflectionHelper.writeField(first, "messageId", 100L);
+        TestReflectionHelper.writeField(first, "messageTimestamp", 1710000000000L);
+        sessionManager.sendQixinMessageToBot("modern", "0:fs:session:", "one", "7618", "Alice", "direct", first);
+
+        CapturingEmitter replayEmitter = new CapturingEmitter();
+        sessionManager.replayMissedEvents("modern", replayEmitter, "999", "1.2.0");
+
+        assertEquals(1, replayEmitter.messages.size());
+        assertTrue(replayEmitter.messages.getFirst().contains("reset"));
+        assertTrue(replayEmitter.messages.getFirst().contains("cursor_expired"));
+    }
+
+    @Test
     void sendHeartbeat_shouldRemoveBrokenEmitters() {
         FailingEmitter failingEmitter = new FailingEmitter();
         sessionManager.registerBot("app-1", failingEmitter, "1.2.0");
@@ -97,7 +142,20 @@ class SseSessionManagerTest {
                 var set = (java.util.Set<ResponseBodyEmitter.DataWithMediaType>) payload;
                 StringBuilder sb = new StringBuilder();
                 for (ResponseBodyEmitter.DataWithMediaType item : set) {
-                    sb.append(String.valueOf(item.getData()));
+                    Object data = item.getData();
+                    if (data instanceof String value) {
+                        sb.append(value);
+                    } else {
+                        sb.append(JSON.writeValueAsString(data));
+                    }
+                }
+                try {
+                    Object comment = TestReflectionHelper.readField(builder, "comment");
+                    if (comment != null) {
+                        sb.append(comment);
+                    }
+                } catch (AssertionError ignored) {
+                    // builder 未设置 comment 字段时忽略
                 }
                 messages.add(sb.toString());
             } catch (Exception e) {
