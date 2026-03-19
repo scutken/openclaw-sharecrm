@@ -32,7 +32,7 @@ async function readZipEntries(zipPath) {
   throw new Error("python or python3 is required to inspect the zip artifact");
 }
 
-test("build-package creates a zip that matches npm package layout", async () => {
+test("build-package creates a zip with a sharecrm top-level directory", async () => {
   const packageJson = JSON.parse(
     await readFile(path.join(projectDir, "package.json"), "utf8"),
   );
@@ -43,10 +43,10 @@ test("build-package creates a zip that matches npm package layout", async () => 
   try {
     await execFileAsync("node", ["./scripts/build-package.mjs"], { cwd: projectDir });
     assert.deepEqual(await readZipEntries(zipPath), [
-      "package/README.md",
-      "package/dist/sharecrm.js",
-      "package/openclaw.plugin.json",
-      "package/package.json",
+      "sharecrm/README.md",
+      "sharecrm/dist/sharecrm.js",
+      "sharecrm/openclaw.plugin.json",
+      "sharecrm/package.json",
     ]);
   } finally {
     await rm(zipPath, { force: true });

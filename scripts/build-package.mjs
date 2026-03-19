@@ -83,7 +83,7 @@ function commandExists(command, args) {
 
 async function main() {
   const stageDir = path.join(projectDir, "dist-package");
-  const packageDir = path.join(stageDir, "package");
+  const packageDir = path.join(stageDir, "sharecrm");
   const packageJson = JSON.parse(
     await readFile(path.join(projectDir, "package.json"), "utf8"),
   );

@@ -78,28 +78,13 @@ npm config set registry https://registry.npmjs.org
 
 这个方式最稳，通常不依赖国外网络。
 
-1. 拿到插件压缩包，例如：`sharecrm.zip`
-2. 解压到 OpenClaw 的插件目录（发布包内部带一层 `package/` 目录）
-
-Linux / macOS：
+拿到发布包后，直接执行：
 
 ```bash
-mkdir -p ~/.openclaw/extensions/sharecrm
-unzip sharecrm.zip -d ~/.openclaw/extensions/sharecrm
-mv ~/.openclaw/extensions/sharecrm/package/* ~/.openclaw/extensions/sharecrm/
-rm -rf ~/.openclaw/extensions/sharecrm/package
+openclaw plugins install ./openclaw-sharecrm-v<version>.zip
 ```
 
-Windows（PowerShell）：
-
-```powershell
-New-Item -ItemType Directory -Force "$HOME/.openclaw/extensions/sharecrm"
-Expand-Archive .\sharecrm.zip "$HOME/.openclaw/extensions/sharecrm" -Force
-Move-Item "$HOME/.openclaw/extensions/sharecrm/package/*" "$HOME/.openclaw/extensions/sharecrm" -Force
-Remove-Item "$HOME/.openclaw/extensions/sharecrm/package" -Recurse -Force
-```
-
-如果你拿到的是发布包，压缩包里的 `package/` 目录应包含：
+安装器会自动解压。当前发布包里的顶层目录是 `sharecrm/`，其中包含：
 
 - `package.json`
 - `dist/sharecrm.js`
@@ -275,8 +260,9 @@ openclaw plugins update @openclaw-fs/sharecrm
 
 ### zip / 本地文件安装的升级
 
-1. 删除旧目录
-2. 用新包重新解压覆盖
+```bash
+openclaw plugins install ./openclaw-sharecrm-v<version>.zip
+```
 
 ---
 
