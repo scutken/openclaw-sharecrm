@@ -2,7 +2,7 @@
  * ShareCRM IM Gateway 的客户端
  *
  * 架构：SSE 下行 + REST API 上行
- * - SSE: 接收服务端推送的消息（connected, ping, message, error）
+ * - SSE: 接收服务端推送的消息（connected, message, reset, error）
  * - REST API: 发送消息到服务端
  */
 
@@ -16,7 +16,8 @@ import type {
   SendMessageResponse,
 } from "./types.js";
 
-const RECONNECT_DELAY_MS = 3000;
+const DEFAULT_RECONNECT_DELAY_MS = 1000;
+const IMMEDIATE_RECONNECT_DELAY_MS = 50;
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000; // 提前 5 分钟刷新 Token
 const MAX_LIFETIME_RECONNECT_BUFFER_MS = 5 * 1000;
 const SEND_RETRY_BASE_DELAY_MS = 1000;
@@ -63,7 +64,7 @@ export function buildSendMessagePayload(
 
 export type ShareCrmClientOptions = {
   account: ResolvedShareCrmAccount;
-  onConnected: (info: { botFullId: string; version?: string; maxLifetime?: number }) => void;
+  onConnected: (info: { botFullId: string; protocolVersion?: string; clientVersion?: string; maxLifetime?: number }) => void;
   onMessage: (data: ShareCrmSseEvent & { type: "message" }) => void;
   onDisconnected: (reason: string) => void;
   onError?: (error: Error) => void;
@@ -80,6 +81,8 @@ export class ShareCrmClient {
   private shouldReconnect = true;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private maxLifetimeTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
+  private lastEventId: string | null = null;
   private _connected = false;
   private _connecting = false;
 
@@ -164,6 +167,13 @@ export class ShareCrmClient {
         },
       };
 
+      if (this.lastEventId) {
+        reqOptions.headers = {
+          ...reqOptions.headers,
+          "Last-Event-ID": this.lastEventId,
+        };
+      }
+
       this.request = httpModule.request(reqOptions, (res) => {
         this._connecting = false;
 
@@ -180,8 +190,8 @@ export class ShareCrmClient {
 
         res.on("data", (chunk: Buffer) => {
           buffer += chunk.toString();
-          buffer = this.parseSSEBuffer(buffer, (event, data) => {
-            this.handleParsedEvent(event, data);
+          buffer = this.parseSSEBuffer(buffer, ({ event, data, id, retry }) => {
+            this.handleParsedEvent(event, data, { id, retry });
           });
         });
 
@@ -223,7 +233,7 @@ export class ShareCrmClient {
         this.scheduleReconnect();
       });
 
-      this.request.setTimeout(60000); // 60秒超时（服务端 ping 间隔 30s，留 2x 余量）
+      this.request.setTimeout(0);
       this.request.end();
 
     } catch (err) {
@@ -244,33 +254,56 @@ export class ShareCrmClient {
   }
 
   /** 解析 SSE 事件流，返回未处理的剩余 buffer */
-  private parseSSEBuffer(buffer: string, callback: (event: string, data: string) => void): string {
-    const blocks = buffer.split("\n\n");
+  private parseSSEBuffer(
+    buffer: string,
+    callback: (event: { event: string; data: string; id?: string; retry?: number }) => void,
+  ): string {
+    const blocks = buffer.replace(/\r\n/g, "\n").split("\n\n");
     const remaining = blocks.pop() ?? ""; // 最后一块可能不完整
     for (const block of blocks) {
       if (!block.trim()) continue;
 
       let eventName = "message";
       const dataLines: string[] = [];
+      let id: string | undefined;
+      let retry: number | undefined;
 
       for (const line of block.split("\n")) {
+        if (!line || line.startsWith(":")) {
+          continue;
+        }
         if (line.startsWith("event:")) {
           eventName = line.slice(6).trim();
         } else if (line.startsWith("data:")) {
           dataLines.push(line.slice(5).trim());
+        } else if (line.startsWith("id:")) {
+          id = line.slice(3).trim();
+        } else if (line.startsWith("retry:")) {
+          const nextDelay = Number.parseInt(line.slice(6).trim(), 10);
+          if (Number.isFinite(nextDelay) && nextDelay >= 0) {
+            retry = nextDelay;
+          }
         }
       }
 
       if (dataLines.length > 0) {
-        callback(eventName, dataLines.join("\n"));
+        callback({ event: eventName, data: dataLines.join("\n"), id, retry });
       }
     }
     return remaining;
   }
 
   /** 处理解析后的事件 */
-  private handleParsedEvent(eventName: string, data: string): void {
+  private handleParsedEvent(eventName: string, data: string, meta?: { id?: string; retry?: number }): void {
     const log = this.options.log ?? console.log;
+
+    if (meta?.retry != null) {
+      this.reconnectDelayMs = Math.max(0, meta.retry);
+    }
+
+    if (meta?.id) {
+      this.lastEventId = meta.id;
+    }
 
     try {
       const msg: ShareCrmSseEvent = JSON.parse(data);
@@ -289,9 +322,13 @@ export class ShareCrmClient {
         this._connected = true;
         log(`sharecrm: 已连接企信 Bot ${msg.data.bot_full_id}`);
         this.refreshMaxLifetimeTimer(msg.data.max_lifetime);
+        if (msg.data.retry != null && msg.data.retry >= 0) {
+          this.reconnectDelayMs = msg.data.retry;
+        }
         this.options.onConnected({
           botFullId: msg.data.bot_full_id,
-          version: msg.data.version,
+          protocolVersion: msg.data.protocol_version,
+          clientVersion: msg.data.client_version,
           maxLifetime: msg.data.max_lifetime,
         });
         break;
@@ -305,8 +342,14 @@ export class ShareCrmClient {
         this.options.onError?.(new Error(`[${msg.error.code}] ${msg.error.message}`));
         break;
 
-      case "ping":
-        console.debug("sharecrm: 收到心跳 ping");
+      case "reset":
+        log(`sharecrm: 服务端要求重置事件游标: ${msg.reason}`);
+        log("sharecrm: 无法恢复断线期间的历史消息，将立即重连；此前消息可能未被接收");
+        this.lastEventId = null;
+        this.cleanupRequest();
+        this._connected = false;
+        this.options.onDisconnected(`SSE reset: ${msg.reason}`);
+        this.scheduleReconnect(IMMEDIATE_RECONNECT_DELAY_MS);
         break;
     }
   }
@@ -332,7 +375,7 @@ export class ShareCrmClient {
       log(`sharecrm: SSE 连接即将达到最大生命周期，主动重连`);
       this.cleanupRequest();
       this._connected = false;
-      this.scheduleReconnect();
+      this.scheduleReconnect(IMMEDIATE_RECONNECT_DELAY_MS);
     }, reconnectInMs);
   }
 
@@ -420,19 +463,19 @@ export class ShareCrmClient {
   }
 
   /** 安排重连尝试 */
-  private scheduleReconnect(): void {
+  private scheduleReconnect(delayMs = this.reconnectDelayMs): void {
     if (!this.shouldReconnect) return;
     if (this.reconnectTimer) return;
 
     const log = this.options.log ?? console.log;
-    log(`sharecrm: ${RECONNECT_DELAY_MS}ms 后重连...`);
+    log(`sharecrm: ${delayMs}ms 后重连...`);
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.shouldReconnect) {
         this.connect();
       }
-    }, RECONNECT_DELAY_MS);
+    }, delayMs);
   }
 
   /** 断开连接并停止重连 */

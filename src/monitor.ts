@@ -448,7 +448,7 @@ async function monitorSingleAccount(params: {
       onConnected: (info) => {
         botInfo.set(accountId, info);
         log(
-          `sharecrm[${accountId}]: 已连接企信 Bot ${info.botFullId} (version=${info.version ?? "unknown"}, maxLifetime=${info.maxLifetime ?? 0})`,
+          `sharecrm[${accountId}]: 已连接企信 Bot ${info.botFullId} (protocol=${info.protocolVersion ?? "unknown"}, client=${info.clientVersion ?? "unknown"}, maxLifetime=${info.maxLifetime ?? 0})`,
         );
       },
       onMessage: (event) => {

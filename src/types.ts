@@ -9,15 +9,17 @@ export interface ShareCrmSseConnectedEvent {
   type: "connected";
   data: {
     bot_full_id: string;
-    version?: string;
+    protocol_version?: string;
+    client_version?: string;
     max_lifetime?: number;
+    retry?: number;
   };
 }
 
-/** SSE 心跳事件 */
-export interface ShareCrmSsePingEvent {
-  type: "ping";
-  time: number;
+/** SSE 重置事件 */
+export interface ShareCrmSseResetEvent {
+  type: "reset";
+  reason: string;
 }
 
 /** SSE 消息事件 */
@@ -61,7 +63,7 @@ export interface ShareCrmSseErrorEvent {
 /** SSE 事件联合类型 */
 export type ShareCrmSseEvent =
   | ShareCrmSseConnectedEvent
-  | ShareCrmSsePingEvent
+  | ShareCrmSseResetEvent
   | ShareCrmSseMessageEvent
   | ShareCrmSseErrorEvent;
 

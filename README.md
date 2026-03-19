@@ -218,17 +218,24 @@ openclaw configure --section channels
 
 插件采用：
 
-- **SSE 下行**：接收 Gateway 推来的 `connected / ping / message`
+- **SSE 下行**：接收 Gateway 推来的 `connected / message / reset`
 - **REST 上行**：把回复消息发回 Gateway
 
 Gateway 1.2 下，插件会：
 
 - 建连时带 `version=1.2.0`
+- 记住最近一条事件 `id`，重连时通过 `Last-Event-ID` 带回
+- 遵循服务端下发的 `retry` 重连等待时间
 - 优先读取 `message.content`
 - 保留并复用 `chat_id`
 - 在服务端给出 `max_lifetime` 时主动重连
 
-补充：
+补充说明：
+
+- Gateway 的心跳现在使用 **SSE comment**，不会作为业务事件交给插件处理
+- 如果服务端返回 `reset`，表示旧事件游标已经失效，插件会清空本地游标后重新建连，并记录日志提示：此前消息可能未被接收
+
+继续补充：
 
 - 插件对外发消息，本质上仍是通过 `chat_id` 发给企信
 - `user:<userId>` 只是插件侧的便捷写法，前提是该用户之前给 Bot 发过私聊消息，插件已经记住了这条会话的 `chat_id`

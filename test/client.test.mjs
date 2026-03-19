@@ -44,6 +44,63 @@ test("computeRetryDelayMs adds up to 20% jitter", () => {
   assert.equal(computeRetryDelayMs(1000, () => 1), 1200);
 });
 
+test("parseSSEBuffer ignores comment heartbeats and reads retry/id", () => {
+  const client = new ShareCrmClient({
+    account: {
+      accountId: "default",
+      enabled: true,
+      configured: true,
+      gatewayBaseUrl: "https://open.fxiaoke.com",
+      appId: "app-1",
+      appSecret: "secret-1",
+      config: {},
+    },
+    onConnected() {},
+    onMessage() {},
+    onDisconnected() {},
+    log() {},
+  });
+
+  const events = [];
+  const remaining = client.parseSSEBuffer(
+    ": keepalive\n\nretry: 1000\nid: 123\nevent: message\ndata: {\"type\":\"message\",\"data\":{\"message_id\":\"123\"}}\n\n",
+    (event) => events.push(event),
+  );
+
+  assert.equal(remaining, "");
+  assert.equal(events.length, 1);
+  assert.equal(events[0].retry, 1000);
+  assert.equal(events[0].id, "123");
+  assert.equal(events[0].event, "message");
+});
+
+test("handleParsedEvent stores lastEventId and reconnect delay", () => {
+  const client = new ShareCrmClient({
+    account: {
+      accountId: "default",
+      enabled: true,
+      configured: true,
+      gatewayBaseUrl: "https://open.fxiaoke.com",
+      appId: "app-1",
+      appSecret: "secret-1",
+      config: {},
+    },
+    onConnected() {},
+    onMessage() {},
+    onDisconnected() {},
+    log() {},
+  });
+
+  client.handleParsedEvent(
+    "message",
+    '{"type":"message","data":{"message_id":"123","chat_id":"chat-1","chat_type":"direct","from":{"id":"1","name":"u"},"text":"hi","date":1}}',
+    { id: "123", retry: 1500 },
+  );
+
+  assert.equal(client.lastEventId, "123");
+  assert.equal(client.reconnectDelayMs, 1500);
+});
+
 test("sendMessage refreshes token and retries once on 40101", async () => {
   const calls = [];
   const client = new ShareCrmClient({
