@@ -79,13 +79,15 @@ npm config set registry https://registry.npmjs.org
 这个方式最稳，通常不依赖国外网络。
 
 1. 拿到插件压缩包，例如：`sharecrm.zip`
-2. 解压到 OpenClaw 的插件目录
+2. 解压到 OpenClaw 的插件目录（发布包内部带一层 `package/` 目录）
 
 Linux / macOS：
 
 ```bash
 mkdir -p ~/.openclaw/extensions/sharecrm
 unzip sharecrm.zip -d ~/.openclaw/extensions/sharecrm
+mv ~/.openclaw/extensions/sharecrm/package/* ~/.openclaw/extensions/sharecrm/
+rm -rf ~/.openclaw/extensions/sharecrm/package
 ```
 
 Windows（PowerShell）：
@@ -93,10 +95,13 @@ Windows（PowerShell）：
 ```powershell
 New-Item -ItemType Directory -Force "$HOME/.openclaw/extensions/sharecrm"
 Expand-Archive .\sharecrm.zip "$HOME/.openclaw/extensions/sharecrm" -Force
+Move-Item "$HOME/.openclaw/extensions/sharecrm/package/*" "$HOME/.openclaw/extensions/sharecrm" -Force
+Remove-Item "$HOME/.openclaw/extensions/sharecrm/package" -Recurse -Force
 ```
 
-如果你拿到的是发布包，解压后目录里应能看到：
+如果你拿到的是发布包，压缩包里的 `package/` 目录应包含：
 
+- `package.json`
 - `dist/sharecrm.js`
 - `openclaw.plugin.json`
 - `README.md`
