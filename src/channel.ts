@@ -15,12 +15,91 @@ import { listAccountIds, resolveAccount } from "./accounts.js";
 import { shareCrmOnboardingAdapter } from "./onboarding.js";
 import {
   getActiveClient,
+  getBotInfo,
+  isAccountConnected,
   resolveDirectChatIdForUser,
   resolveDirectChatTargetForUser,
 } from "./monitor.js";
 import type { ResolvedShareCrmAccount, ShareCrmChannelConfig } from "./types.js";
 
 const CHANNEL_ID = "sharecrm";
+
+function normalizeShareCrmTarget(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const withoutProvider = trimmed.replace(/^sharecrm:/i, "").trim();
+  if (!withoutProvider) return undefined;
+
+  const match = withoutProvider.match(/^(user|chat):(.*)$/i);
+  if (!match) return withoutProvider;
+
+  const kind = match[1]?.toLowerCase();
+  const value = match[2]?.trim();
+  if (!kind || !value) return undefined;
+  return `${kind}:${value}`;
+}
+
+export function isLikelyShareCrmChatId(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  const segments = trimmed.split(":");
+  if (segments.length !== 4) return false;
+  const [env, ea, sessionId] = segments;
+  return /^\d+$/.test(env) && Boolean(ea?.trim()) && Boolean(sessionId?.trim());
+}
+
+export function isValidShareCrmTarget(value: string): boolean {
+  const normalized = normalizeShareCrmTarget(value);
+  if (!normalized) return false;
+  if (/^chat:/i.test(normalized)) return isLikelyShareCrmChatId(normalized.slice(5));
+  if (/^user:/i.test(normalized)) return Boolean(normalized.slice(5).trim());
+  return isLikelyShareCrmChatId(normalized);
+}
+
+export async function resolveShareCrmSendTarget(params: {
+  accountId: string;
+  to: string;
+  fallbackChatId?: string;
+}): Promise<{ chatId: string }> {
+  const rawTarget = params.to.trim();
+  const fallbackChatId = params.fallbackChatId?.trim();
+  const target = normalizeShareCrmTarget(rawTarget) ?? (fallbackChatId && isLikelyShareCrmChatId(fallbackChatId) ? fallbackChatId : undefined);
+
+  if (!target) {
+    throw new Error("ShareCRM: target is empty");
+  }
+
+  if (/^chat:/i.test(target)) {
+    const chatId = target.slice(5).trim();
+    if (!isLikelyShareCrmChatId(chatId)) {
+      throw new Error(`ShareCRM: invalid target \"${rawTarget || target}\", expected chat:<chat_id> or user:<userId>`);
+    }
+    return { chatId };
+  }
+
+  if (/^user:/i.test(target)) {
+    const userId = target.slice(5).trim();
+    if (!userId) {
+      throw new Error(`ShareCRM: invalid target \"${rawTarget || target}\", expected chat:<chat_id> or user:<userId>`);
+    }
+    const mappedChatId = resolveDirectChatIdForUser(params.accountId, userId);
+    if (!mappedChatId) {
+      throw new Error(`ShareCRM: no known chat_id for user \"${userId}\", wait for an inbound DM first or use chat:<chat_id>.`);
+    }
+    return { chatId: mappedChatId };
+  }
+
+  if (isLikelyShareCrmChatId(target)) {
+    return { chatId: target };
+  }
+
+  const mappedChatId = resolveDirectChatIdForUser(params.accountId, target);
+  if (mappedChatId) {
+    return { chatId: mappedChatId };
+  }
+
+  throw new Error(`ShareCRM: invalid target \"${rawTarget || target}\", expected chat:<chat_id> or user:<userId>`);
+}
 
 const meta: ChannelMeta = {
   id: CHANNEL_ID,
@@ -120,6 +199,24 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
               gatewayBaseUrl: { type: "string" },
               appId: { type: "string" },
               appSecret: { type: "string" },
+              dmPolicy: {
+                type: "string",
+                enum: ["open", "pairing", "allowlist", "disabled"],
+              },
+              allowFrom: {
+                type: "array",
+                items: { oneOf: [{ type: "string" }, { type: "number" }] },
+              },
+              groupPolicy: {
+                type: "string",
+                enum: ["open", "allowlist", "disabled"],
+              },
+              groupAllowFrom: {
+                type: "array",
+                items: { oneOf: [{ type: "string" }, { type: "number" }] },
+              },
+              historyLimit: { type: "integer", minimum: 0 },
+              textChunkLimit: { type: "integer", minimum: 1 },
             },
           },
         },
@@ -258,27 +355,10 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
     },
   },
   messaging: {
-    normalizeTarget: (raw) => {
-      const trimmed = raw.trim();
-      if (!trimmed) return undefined;
-      const withoutProvider = trimmed.replace(/^sharecrm:/i, "").trim();
-      if (!withoutProvider) return undefined;
-
-      const match = withoutProvider.match(/^(user|chat):(.*)$/i);
-      if (!match) return withoutProvider;
-
-      const kind = match[1]?.toLowerCase();
-      const value = match[2]?.trim();
-      if (!kind || !value) return undefined;
-      return `${kind}:${value}`;
-    },
+    normalizeTarget: normalizeShareCrmTarget,
     targetResolver: {
-      looksLikeId: (id) => {
-        const trimmed = id?.trim();
-        if (!trimmed) return false;
-        return /^(ch-|u-|sharecrm:|user:|chat:)/i.test(trimmed) || trimmed.length > 2;
-      },
-      hint: "<chatId|user:userId|chat:chatId>",
+      looksLikeId: (id) => Boolean(id && isValidShareCrmTarget(id)),
+      hint: "<chat:<env:ea:sessionId:parentSessionId>|user:<userId>>",
     },
   },
   directory: {
@@ -297,32 +377,12 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
       }
 
       const target = to.trim();
-      if (!target) {
-        throw new Error("ShareCRM: target is empty");
-      }
-
-      let chatId = target;
-      if (/^chat:/i.test(target)) {
-        chatId = target.slice(5).trim();
-      } else if (/^user:/i.test(target)) {
-        const userId = target.slice(5).trim();
-        const mappedChatId = resolveDirectChatIdForUser(account.accountId, userId);
-        if (!mappedChatId) {
-          throw new Error(
-            `ShareCRM: no known direct chat_id for user ${userId}. Reply from an inbound DM first or use chat:<chat_id>.`,
-          );
-        }
-        chatId = mappedChatId;
-      } else {
-        const mappedChatId = resolveDirectChatIdForUser(account.accountId, target);
-        if (mappedChatId) {
-          chatId = mappedChatId;
-        }
-      }
-
-      if (!chatId) {
-        throw new Error("ShareCRM: resolved chat_id is empty");
-      }
+      const fallbackChatId = account.config?.chatId?.trim();
+      const { chatId } = await resolveShareCrmSendTarget({
+        accountId: account.accountId,
+        to: target,
+        fallbackChatId,
+      });
 
       const result = await client.sendMessage(chatId, text);
       if (!result) {
@@ -337,12 +397,20 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
       ...buildBaseChannelStatusSummary(snapshot),
     }),
     buildAccountSnapshot: ({ account, runtime }) => ({
+      ...(getBotInfo(account.accountId)
+        ? {
+            botFullId: getBotInfo(account.accountId)?.botFullId,
+            protocolVersion: getBotInfo(account.accountId)?.version ?? null,
+            maxLifetime: getBotInfo(account.accountId)?.maxLifetime ?? null,
+          }
+        : {}),
       accountId: account.accountId,
       enabled: account.enabled,
       configured: account.configured,
       name: account.name,
       gatewayBaseUrl: account.gatewayBaseUrl,
       appId: account.appId,
+      connected: isAccountConnected(account.accountId),
       running: runtime?.running ?? false,
       lastStartAt: runtime?.lastStartAt ?? null,
       lastStopAt: runtime?.lastStopAt ?? null,

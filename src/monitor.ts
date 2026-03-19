@@ -24,6 +24,7 @@ import {
 import { resolveAccount, listEnabledAccounts } from "./accounts.js";
 import { ShareCrmClient } from "./client.js";
 import { getShareCrmRuntime } from "./runtime.js";
+import { loadDirectChatBindings, persistDirectChatBindings } from "./state.js";
 import type { ResolvedShareCrmAccount, ShareCrmSseEvent } from "./types.js";
 
 const CHANNEL_ID = "sharecrm";
@@ -31,11 +32,50 @@ const CHANNEL_ID = "sharecrm";
 // 各账号的活跃客户端
 const activeClients = new Map<string, ShareCrmClient>();
 // 各账号的 Bot 信息
-const botInfo = new Map<string, { botId: string }>();
+const botInfo = new Map<string, { botFullId: string; version?: string; maxLifetime?: number }>();
 // Direct 消息会话映射: accountId -> (userId -> chatId)
 const directChatByUserByAccount = new Map<string, Map<string, string>>();
 
-function rememberDirectChatId(accountId: string, userId: string, chatId: string): void {
+export function isAccountConnected(accountId: string): boolean {
+  return activeClients.get(accountId)?.connected ?? false;
+}
+
+function getInboundText(data: (ShareCrmSseEvent & { type: "message" })["data"]): string {
+  return data.message?.content?.trim() || data.text || "";
+}
+
+function getInboundTimestampSeconds(data: (ShareCrmSseEvent & { type: "message" })["data"]): number {
+  return data.timestamp ?? data.date ?? Math.floor(Date.now() / 1000);
+}
+
+export function stripLeadingMention(text: string, botFullId?: string): { text: string; matched: boolean } {
+  const normalized = text.trim();
+  if (!normalized) {
+    return { text: normalized, matched: false };
+  }
+  if (!botFullId) {
+    return { text: normalized, matched: false };
+  }
+
+  const botId = botFullId.trim();
+  const shortId = botId.split(".").pop() ?? botId;
+  const candidates = [botId, shortId].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`^@?${escaped}[,:：，\\s-]*`, "i");
+    if (regex.test(normalized)) {
+      return {
+        text: normalized.replace(regex, "").trim(),
+        matched: true,
+      };
+    }
+  }
+
+  return { text: normalized, matched: false };
+}
+
+export function rememberDirectChatId(accountId: string, userId: string, chatId: string): void {
   if (!accountId || !userId || !chatId) return;
   const normalizedUserId = userId.trim();
   const normalizedChatId = chatId.trim();
@@ -50,6 +90,25 @@ function rememberDirectChatId(accountId: string, userId: string, chatId: string)
     })();
 
   accountMap.set(normalizedUserId, normalizedChatId);
+
+  persistDirectChatBindings(accountId, accountMap).catch((error) => {
+    const runtime = getShareCrmRuntime();
+    runtime.logging.getChildLogger({ channel: CHANNEL_ID, accountId }).warn(
+      `sharecrm: failed to persist direct chat bindings: ${String(error)}`,
+    );
+  });
+}
+
+async function hydrateDirectChatBindings(accountId: string, runtime?: RuntimeEnv): Promise<void> {
+  try {
+    const bindings = await loadDirectChatBindings(accountId);
+    directChatByUserByAccount.set(accountId, bindings);
+    if (bindings.size > 0) {
+      (runtime?.log ?? console.log)(`sharecrm[${accountId}]: 已加载 ${bindings.size} 条 userId->chatId 缓存`);
+    }
+  } catch (error) {
+    (runtime?.error ?? console.error)(`sharecrm[${accountId}]: 加载 userId->chatId 缓存失败: ${String(error)}`);
+  }
 }
 
 export function resolveDirectChatIdForUser(accountId: string, userId: string): string | undefined {
@@ -120,7 +179,15 @@ async function handleInboundMessage(params: {
   const senderName = data.from.name;
   const chatId = data.chat_id;
   const messageId = data.message_id;
-  const text = data.text;
+  const rawText = getInboundText(data);
+  const timestampSeconds = getInboundTimestampSeconds(data);
+  const replyMessageId = data.reply_message_id;
+  const messageType = data.message?.type ?? data.message_type ?? "text";
+  const connectedBotInfo = getBotInfo(account.accountId);
+  const mentionResult = isGroup
+    ? stripLeadingMention(rawText, data.bot_full_id ?? connectedBotInfo?.botFullId)
+    : { text: rawText, matched: true };
+  const text = mentionResult.text || rawText;
 
   log(`sharecrm[${account.accountId}]: 收到消息来自 ${senderName} (${senderId})，会话 ${chatId} (${data.chat_type})`);
 
@@ -182,6 +249,7 @@ async function handleInboundMessage(params: {
   if (isGroup) {
     const groupPolicy = channelCfg?.groupPolicy ?? "disabled";
     const groupAllowFrom = (channelCfg?.groupAllowFrom ?? []).map(String);
+    const requireMention = channelCfg?.requireMention ?? false;
 
     if (groupPolicy === "disabled") {
       log(`sharecrm[${account.accountId}]: 群聊已禁用，忽略 ${chatId}`);
@@ -194,6 +262,10 @@ async function handleInboundMessage(params: {
         log(`sharecrm[${account.accountId}]: 群 ${chatId} 不在白名单中`);
         return;
       }
+    }
+    if (requireMention && !mentionResult.matched) {
+      log(`sharecrm[${account.accountId}]: 群消息未命中 mention，忽略 ${chatId}`);
+      return;
     }
   }
 
@@ -223,13 +295,20 @@ async function handleInboundMessage(params: {
 
   // 构建 Agent 消息体
   const speaker = senderName || senderId;
-  let messageBody = `[message_id: ${messageId}]\n${speaker}: ${text}`;
+  const metadataLines = [`[message_id: ${messageId}]`];
+  if (messageType && messageType !== "text") {
+    metadataLines.push(`[message_type: ${messageType}]`);
+  }
+  if (replyMessageId != null) {
+    metadataLines.push(`[reply_to_message_id: ${replyMessageId}]`);
+  }
+  let messageBody = `${metadataLines.join("\n")}\n${speaker}: ${text}`;
 
   const envelopeOptions = core.channel.reply.resolveEnvelopeFormatOptions(cfg);
   const body = core.channel.reply.formatAgentEnvelope({
     channel: "ShareCRM",
     from: isGroup ? `${chatId}:${senderId}` : senderId,
-    timestamp: new Date(data.date * 1000),
+    timestamp: new Date(timestampSeconds * 1000),
     envelope: envelopeOptions,
     body: messageBody,
   });
@@ -282,7 +361,7 @@ async function handleInboundMessage(params: {
     Provider: CHANNEL_ID as any,
     Surface: CHANNEL_ID as any,
     MessageSid: messageId,
-    Timestamp: data.date * 1000,
+    Timestamp: timestampSeconds * 1000,
     OriginatingChannel: CHANNEL_ID as any,
     OriginatingTo: to,
   });
@@ -361,12 +440,16 @@ async function monitorSingleAccount(params: {
 
   const chatHistories = new Map<string, HistoryEntry[]>();
 
+  await hydrateDirectChatBindings(accountId, runtime);
+
   return new Promise<void>((resolve) => {
     const client = new ShareCrmClient({
       account,
-      onConnected: (botId) => {
-        botInfo.set(accountId, { botId });
-        log(`sharecrm[${accountId}]: 已连接为 ${botId}`);
+      onConnected: (info) => {
+        botInfo.set(accountId, info);
+        log(
+          `sharecrm[${accountId}]: 已连接企信 Bot ${info.botFullId} (protocol=${info.protocolVersion ?? "unknown"}, client=${info.clientVersion ?? "unknown"}, maxLifetime=${info.maxLifetime ?? 0})`,
+        );
       },
       onMessage: (event) => {
         handleInboundMessage({
@@ -381,6 +464,7 @@ async function monitorSingleAccount(params: {
         });
       },
       onDisconnected: (reason) => {
+        botInfo.delete(accountId);
         log(`sharecrm[${accountId}]: 已断开连接: ${reason}`);
       },
       onError: (err) => {
@@ -466,7 +550,7 @@ export function getActiveClient(accountId: string): ShareCrmClient | undefined {
 /**
  * 获取账号的 Bot 信息
  */
-export function getBotInfo(accountId: string): { botId: string } | undefined {
+export function getBotInfo(accountId: string): { botFullId: string; version?: string; maxLifetime?: number } | undefined {
   return botInfo.get(accountId);
 }
 

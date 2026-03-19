@@ -3,7 +3,11 @@
  * 读取 channels.sharecrm 配置，合并单账号覆盖项
  */
 
-import type { ShareCrmChannelConfig, ResolvedShareCrmAccount } from "./types.js";
+import type {
+  ShareCrmAccountConfigRaw,
+  ShareCrmChannelConfig,
+  ResolvedShareCrmAccount,
+} from "./types.js";
 
 const DEFAULT_ACCOUNT_ID = "default";
 export const DEFAULT_GATEWAY_BASE_URL = "https://open.fxiaoke.com";
@@ -11,6 +15,17 @@ export const DEFAULT_GATEWAY_BASE_URL = "https://open.fxiaoke.com";
 /** 从完整配置中提取渠道配置 */
 function getChannelConfig(cfg: any): ShareCrmChannelConfig | undefined {
   return cfg?.channels?.sharecrm;
+}
+
+function mergeAccountConfig(
+  channelCfg: ShareCrmChannelConfig,
+  accountOverride: ShareCrmAccountConfigRaw,
+): ShareCrmChannelConfig {
+  return {
+    ...channelCfg,
+    ...accountOverride,
+    accounts: channelCfg.accounts,
+  };
 }
 
 /**
@@ -59,6 +74,7 @@ export function resolveAccount(cfg: any, accountId?: string | null): ResolvedSha
   const gatewayBaseUrl = accountOverride.gatewayBaseUrl ?? channelCfg.gatewayBaseUrl ?? (envGatewayBaseUrl || DEFAULT_GATEWAY_BASE_URL);
   const appId = accountOverride.appId ?? channelCfg.appId ?? envAppId;
   const appSecret = accountOverride.appSecret ?? channelCfg.appSecret ?? envAppSecret;
+  const mergedConfig = mergeAccountConfig(channelCfg, accountOverride);
 
   const configured = Boolean(gatewayBaseUrl && appId && appSecret);
 
@@ -70,7 +86,7 @@ export function resolveAccount(cfg: any, accountId?: string | null): ResolvedSha
     gatewayBaseUrl,
     appId,
     appSecret,
-    config: channelCfg,
+    config: mergedConfig,
   };
 }
 
