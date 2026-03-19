@@ -75,7 +75,7 @@ export function stripLeadingMention(text: string, botFullId?: string): { text: s
   return { text: normalized, matched: false };
 }
 
-function rememberDirectChatId(accountId: string, userId: string, chatId: string): void {
+export function rememberDirectChatId(accountId: string, userId: string, chatId: string): void {
   if (!accountId || !userId || !chatId) return;
   const normalizedUserId = userId.trim();
   const normalizedChatId = chatId.trim();

@@ -24,20 +24,12 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build
-        run: npm run build
+      - name: Build package
+        run: npm run build:package
 
       - name: Get version
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Create zip package
-        run: |
-          mkdir -p package
-          cp dist/sharecrm.js package/
-          cp openclaw.plugin.json package/
-          cp README.md package/
-          cd package && zip -r ../openclaw-sharecrm-v${{ steps.version.outputs.VERSION }}.zip .
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

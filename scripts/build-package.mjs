@@ -14,6 +14,18 @@ const requiredFiles = [
   "README.md",
 ];
 
+const pythonZipScript = [
+  "import pathlib",
+  "import sys",
+  "import zipfile",
+  "root = pathlib.Path(sys.argv[1])",
+  "zip_path = pathlib.Path(sys.argv[2])",
+  "with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:",
+  "    for file_path in sorted(root.rglob('*')):",
+  "        if file_path.is_file():",
+  "            zf.write(file_path, file_path.relative_to(root).as_posix())",
+].join("\n");
+
 async function removeDirWithRetry(targetDir) {
   const attempts = 20;
   for (let i = 1; i <= attempts; i += 1) {
@@ -71,7 +83,7 @@ function commandExists(command, args) {
 
 async function main() {
   const stageDir = path.join(projectDir, "dist-package");
-  const packageDir = path.join(stageDir, "openclaw-sharecrm");
+  const packageDir = path.join(stageDir, "sharecrm");
   const packageJson = JSON.parse(
     await readFile(path.join(projectDir, "package.json"), "utf8"),
   );
@@ -103,8 +115,12 @@ async function main() {
       "-Command",
       `Compress-Archive -Path * -DestinationPath '../${zipName}' -Force`,
     ], { cwd: stageDir });
+  } else if (commandExists("python", ["--version"])) {
+    run("python", ["-c", pythonZipScript, stageDir, zipPath]);
+  } else if (commandExists("python3", ["--version"])) {
+    run("python3", ["-c", pythonZipScript, stageDir, zipPath]);
   } else {
-    throw new Error("No zip tool found. Install zip or PowerShell (pwsh).");
+    throw new Error("No zip tool found. Install zip, PowerShell (pwsh), or Python.");
   }
 
   await removeDirWithRetry(stageDir);
