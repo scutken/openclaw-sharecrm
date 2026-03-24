@@ -211,9 +211,9 @@ openclaw configure --section channels
 - **SSE 下行**：接收 Gateway 推来的 `connected / message / reset`
 - **REST 上行**：把回复消息发回 Gateway
 
-Gateway 1.2 下，插件会：
+Gateway 1.3 下，插件会：
 
-- 建连时带 `version=1.2.0`
+- 建连时带 `version=1.3.0`
 - 记住最近一条事件 `id`，重连时通过 `Last-Event-ID` 带回
 - 遵循服务端下发的 `retry` 重连等待时间
 - 优先读取 `message.content`

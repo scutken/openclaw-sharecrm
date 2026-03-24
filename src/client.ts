@@ -25,7 +25,7 @@ const SEND_RETRY_JITTER_RATIO = 0.2;
 const SEND_RETRY_MAX_ATTEMPTS = 2;
 const SEND_RECONNECT_WAIT_TIMEOUT_MS = 10_000;
 const SEND_RECONNECT_POLL_MS = 250;
-export const SHARECRM_GATEWAY_PROTOCOL_VERSION = "1.2.0";
+export const SHARECRM_GATEWAY_PROTOCOL_VERSION = "1.3.0";
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

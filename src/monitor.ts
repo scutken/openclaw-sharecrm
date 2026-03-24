@@ -25,7 +25,11 @@ import { resolveAccount, listEnabledAccounts } from "./accounts.js";
 import { ShareCrmClient } from "./client.js";
 import { getShareCrmRuntime } from "./runtime.js";
 import { loadDirectChatBindings, persistDirectChatBindings } from "./state.js";
-import type { ResolvedShareCrmAccount, ShareCrmSseEvent } from "./types.js";
+import type {
+  ResolvedShareCrmAccount,
+  ShareCrmGatewayHistoryMessage,
+  ShareCrmSseEvent,
+} from "./types.js";
 
 const CHANNEL_ID = "sharecrm";
 
@@ -73,6 +77,50 @@ export function stripLeadingMention(text: string, botFullId?: string): { text: s
   }
 
   return { text: normalized, matched: false };
+}
+
+function normalizeGatewayHistoryTimestamp(value?: number): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
+  return value > 1_000_000_000_000 ? value : value * 1000;
+}
+
+function buildGatewayHistoryBody(entry: ShareCrmGatewayHistoryMessage): string {
+  const metadataLines: string[] = [];
+  const messageId = entry.message_id?.trim();
+  const messageType = entry.message_type?.trim();
+  const content = entry.content?.trim() ?? "";
+
+  if (messageId) metadataLines.push(`[message_id: ${messageId}]`);
+  if (messageType && messageType.toLowerCase() !== "t" && messageType.toLowerCase() !== "text") {
+    metadataLines.push(`[message_type: ${messageType}]`);
+  }
+
+  return metadataLines.length > 0 ? `${metadataLines.join("\n")}\n${content}`.trim() : content;
+}
+
+export function normalizeGatewayHistoryEntries(params: {
+  historyMessages?: ShareCrmGatewayHistoryMessage[];
+  currentMessageId?: string;
+}): HistoryEntry[] {
+  const currentMessageId = params.currentMessageId?.trim();
+  return (params.historyMessages ?? [])
+    .filter(Boolean)
+    .filter((entry) => {
+      const messageId = entry.message_id?.trim();
+      return !currentMessageId || !messageId || messageId !== currentMessageId;
+    })
+    .map((entry) => ({
+      sender: entry.full_sender_id?.trim() || entry.sender_id?.trim() || "unknown",
+      body: buildGatewayHistoryBody(entry),
+      timestamp: normalizeGatewayHistoryTimestamp(entry.message_timestamp),
+      messageId: entry.message_id?.trim() || undefined,
+    }))
+    .filter((entry) => entry.body.trim())
+    .sort((a, b) => {
+      const left = typeof a.timestamp === "number" ? a.timestamp : 0;
+      const right = typeof b.timestamp === "number" ? b.timestamp : 0;
+      return left - right;
+    });
 }
 
 export function rememberDirectChatId(accountId: string, userId: string, chatId: string): void {
@@ -200,6 +248,10 @@ async function handleInboundMessage(params: {
   const channelCfg = account.config;
   const dmPolicy = channelCfg?.dmPolicy ?? "open";
   const configAllowFrom = (channelCfg?.allowFrom ?? []).map(String);
+  const historyLimit = Math.max(
+    0,
+    channelCfg?.historyLimit ?? DEFAULT_GROUP_HISTORY_LIMIT,
+  );
 
   if (!isGroup) {
     const pairing = createScopedPairingAccess({
@@ -264,16 +316,21 @@ async function handleInboundMessage(params: {
       }
     }
     if (requireMention && !mentionResult.matched) {
+      recordPendingHistoryEntryIfEnabled({
+        historyMap: chatHistories,
+        historyKey: chatId,
+        limit: historyLimit,
+        entry: {
+          sender: senderName || senderId,
+          body: rawText,
+          timestamp: timestampSeconds * 1000,
+          messageId,
+        },
+      });
       log(`sharecrm[${account.accountId}]: 群消息未命中 mention，忽略 ${chatId}`);
       return;
     }
   }
-
-  // 群聊历史消息处理
-  const historyLimit = Math.max(
-    0,
-    channelCfg?.historyLimit ?? DEFAULT_GROUP_HISTORY_LIMIT,
-  );
 
   // 会话路由
   const peerId = isGroup ? chatId : senderId;
@@ -315,11 +372,23 @@ async function handleInboundMessage(params: {
 
   let combinedBody = body;
   const historyKey = isGroup ? chatId : undefined;
+  const gatewayHistoryEntries = isGroup
+    ? normalizeGatewayHistoryEntries({
+        historyMessages: data.history_messages,
+        currentMessageId: messageId,
+      })
+    : [];
+  const localHistoryEntries = isGroup && historyKey && chatHistories ? (chatHistories.get(historyKey) ?? []) : [];
+  const effectiveHistoryEntries = gatewayHistoryEntries.length > 0 ? gatewayHistoryEntries : localHistoryEntries;
 
   // 如果是群聊，附加历史消息上下文
-  if (isGroup && historyKey && chatHistories) {
+  if (isGroup && historyKey && effectiveHistoryEntries.length > 0) {
+    const historyMap =
+      gatewayHistoryEntries.length > 0
+        ? new Map<string, HistoryEntry[]>([[historyKey, gatewayHistoryEntries]])
+        : chatHistories;
     combinedBody = buildPendingHistoryContextFromMap({
-      historyMap: chatHistories,
+      historyMap,
       historyKey,
       limit: historyLimit,
       currentMessage: combinedBody,
@@ -333,6 +402,15 @@ async function handleInboundMessage(params: {
         }),
     });
   }
+
+  const inboundHistory =
+    isGroup && historyLimit > 0
+      ? effectiveHistoryEntries.map((entry) => ({
+          sender: entry.sender,
+          body: entry.body,
+          timestamp: entry.timestamp,
+        }))
+      : undefined;
 
   // 入队系统事件
   const preview = text.replace(/\s+/g, " ").slice(0, 160);
@@ -348,6 +426,7 @@ async function handleInboundMessage(params: {
   const ctxPayload = core.channel.reply.finalizeInboundContext({
     Body: combinedBody,
     BodyForAgent: messageBody,
+    InboundHistory: inboundHistory,
     RawBody: text,
     CommandBody: text,
     From: from,
@@ -362,6 +441,7 @@ async function handleInboundMessage(params: {
     Surface: CHANNEL_ID as any,
     MessageSid: messageId,
     Timestamp: timestampSeconds * 1000,
+    WasMentioned: isGroup ? mentionResult.matched : undefined,
     OriginatingChannel: CHANNEL_ID as any,
     OriginatingTo: to,
   });
