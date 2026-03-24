@@ -2,14 +2,13 @@
  * ShareCRM onboarding adapter for CLI setup wizard.
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/setup";
 import {
   formatDocsLink,
-  promptChannelAccessConfig,
-  type ChannelOnboardingAdapter,
-  type ChannelOnboardingDmPolicy,
+  type ChannelSetupWizard,
+  type ChannelSetupDmPolicy,
   type WizardPrompter,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/setup";
 import { resolveAccount } from "./accounts.js";
 import { DEFAULT_GATEWAY_BASE_URL } from "./accounts.js";
 import type { ResolvedShareCrmAccount, ShareCrmChannelConfig } from "./types.js";
@@ -149,7 +148,7 @@ function isAccountConfigured(account: ResolvedShareCrmAccount | null): boolean {
 /**
  * DM policy configuration
  */
-const dmPolicy: ChannelOnboardingDmPolicy = {
+const dmPolicy: ChannelSetupDmPolicy = {
   label: "ShareCRM",
   channel: CHANNEL_ID,
   policyKey: `channels.${CHANNEL_ID}.dmPolicy`,
@@ -185,74 +184,77 @@ const dmPolicy: ChannelOnboardingDmPolicy = {
 /**
  * ShareCRM onboarding adapter
  */
-export const shareCrmOnboardingAdapter: ChannelOnboardingAdapter = {
+export const shareCrmSetupWizard: ChannelSetupWizard = {
   channel: CHANNEL_ID,
-
-  getStatus: async ({ cfg }) => {
-    const account = resolveAccount(cfg, DEFAULT_ACCOUNT_ID);
-    const configured = isAccountConfigured(account);
-
-    return {
-      channel: CHANNEL_ID,
-      configured,
-      statusLines: [
-        `ShareCRM: ${configured ? "已配置" : "需要 appId, appSecret"}`,
-      ],
-      selectionHint: configured ? "已配置" : "需要配置",
-    };
+  status: {
+    configuredLabel: "已配置",
+    unconfiguredLabel: "需要配置",
+    configuredHint: "ShareCRM 已配置",
+    unconfiguredHint: "需要 gatewayBaseUrl、appId、appSecret",
+    resolveConfigured: async ({ cfg }) => {
+      const account = resolveAccount(cfg, DEFAULT_ACCOUNT_ID);
+      return isAccountConfigured(account);
+    },
+    resolveStatusLines: async ({ cfg, configured }) => {
+      const account = resolveAccount(cfg, DEFAULT_ACCOUNT_ID);
+      return [
+        `ShareCRM: ${configured ? "已配置" : "需要 gatewayBaseUrl、appId、appSecret"}`,
+        account?.gatewayBaseUrl ? `Gateway: ${account.gatewayBaseUrl}` : "Gateway: 未设置",
+      ];
+    },
+    resolveSelectionHint: async ({ configured }) => (configured ? "已配置" : "需要配置"),
   },
-
-  configure: async ({ cfg, prompter, forceAllowFrom }) => {
+  prepare: async ({ cfg, prompter }) => {
     const account = resolveAccount(cfg, DEFAULT_ACCOUNT_ID);
-
     if (!isAccountConfigured(account)) {
       await noteShareCrmSetupHelp(prompter);
     }
-
-    // Prompt for credentials
-    const gatewayBaseUrl = await promptGatewayBaseUrl(prompter, account);
-    const appId = await promptAppId(prompter, account);
-    const appSecret = await promptAppSecret(prompter, account);
-
-    let cfgWithAccount = setShareCrmAccount(cfg, {
-      gatewayBaseUrl,
-      appId,
-      appSecret,
-      enabled: true,
-    });
-
-    // Handle allowFrom if forced
-    if (forceAllowFrom && dmPolicy.promptAllowFrom) {
-      cfgWithAccount = await dmPolicy.promptAllowFrom({ cfg: cfgWithAccount, prompter });
-    }
-
-    // Prompt for access control
-    // Map dmPolicy to ChannelAccessPolicy (pairing maps to allowlist)
-    const dmPolicyValue = account.config?.dmPolicy ?? "open";
-    const currentPolicy: "open" | "allowlist" | "disabled" =
-      dmPolicyValue === "pairing" ? "allowlist" : dmPolicyValue === "open" ? "open" :
-      dmPolicyValue === "disabled" ? "disabled" : "allowlist";
-
-    const accessConfig = await promptChannelAccessConfig({
-      prompter,
-      label: "ShareCRM 私聊",
-      currentPolicy,
-      currentEntries: (account.config?.allowFrom ?? []).map(String),
-      placeholder: "user-001",
-      updatePrompt: isAccountConfigured(account),
-    });
-
-    if (accessConfig) {
-      cfgWithAccount = setShareCrmAccount(cfgWithAccount, {
-        dmPolicy: accessConfig.policy as "open" | "pairing" | "allowlist" | "disabled",
-        allowFrom: accessConfig.entries,
-      });
-    }
-
-    return { cfg: cfgWithAccount };
   },
-
+  credentials: [],
+  textInputs: [
+    {
+      inputKey: "url",
+      message: "Gateway 基地址",
+      placeholder: DEFAULT_GATEWAY_BASE_URL,
+      currentValue: async ({ cfg }) => resolveAccount(cfg, DEFAULT_ACCOUNT_ID)?.gatewayBaseUrl,
+      initialValue: async ({ cfg }) =>
+        resolveAccount(cfg, DEFAULT_ACCOUNT_ID)?.gatewayBaseUrl || process.env.SHARECRM_GATEWAY_BASE_URL?.trim() || DEFAULT_GATEWAY_BASE_URL,
+      validate: ({ value }) => {
+        const raw = value.trim();
+        if (!raw) return "必填";
+        if (!raw.startsWith("http://") && !raw.startsWith("https://")) return "地址应以 http:// 或 https:// 开头";
+        return undefined;
+      },
+      applySet: ({ cfg, value }) => setShareCrmAccount(cfg, { gatewayBaseUrl: value, enabled: true }),
+    },
+    {
+      inputKey: "userId",
+      message: "App ID",
+      placeholder: "bot-001",
+      currentValue: async ({ cfg }) => resolveAccount(cfg, DEFAULT_ACCOUNT_ID)?.appId,
+      initialValue: async ({ cfg }) =>
+        resolveAccount(cfg, DEFAULT_ACCOUNT_ID)?.appId || process.env.SHARECRM_APP_ID?.trim() || "",
+      validate: ({ value }) => (value.trim() ? undefined : "必填"),
+      applySet: ({ cfg, value }) => setShareCrmAccount(cfg, { appId: value, enabled: true }),
+    },
+    {
+      inputKey: "accessToken",
+      message: "App Secret",
+      currentValue: async ({ cfg }) => resolveAccount(cfg, DEFAULT_ACCOUNT_ID)?.appSecret,
+      initialValue: async ({ cfg }) =>
+        resolveAccount(cfg, DEFAULT_ACCOUNT_ID)?.appSecret || process.env.SHARECRM_APP_SECRET?.trim() || "",
+      validate: ({ value }) => (value.trim() ? undefined : "必填"),
+      applySet: ({ cfg, value }) => setShareCrmAccount(cfg, { appSecret: value, enabled: true }),
+    },
+  ],
   dmPolicy,
+  completionNote: {
+    title: "ShareCRM 已配置",
+    lines: [
+      "可继续通过群聊 allowlist / requireMention 控制群消息进入方式。",
+      `文档: ${formatDocsLink("/channels/sharecrm", "channels/sharecrm")}`,
+    ],
+  },
 
   disable: (cfg) => {
     const sharecrm = (cfg.channels as Record<string, unknown>)?.[CHANNEL_ID] as

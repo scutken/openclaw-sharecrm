@@ -3,7 +3,7 @@
  * 存储 api.runtime 中的 PluginRuntime（在 register() 时设置）
  */
 
-import type { PluginRuntime } from "openclaw/plugin-sdk";
+import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 
 let runtime: PluginRuntime | null = null;
 

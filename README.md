@@ -2,6 +2,8 @@
 
 把 OpenClaw 接到纷享销客企信（ShareCRM）。
 
+版本说明见：[CHANGELOG.md](./CHANGELOG.md)
+
 适合：
 - 想让 OpenClaw 收企信消息、自动回复
 - 已经有 `appId`、`appSecret`
@@ -12,7 +14,7 @@
 
 - 私聊收发消息
 - 按配置接入群聊
-- Gateway 1.2 协议
+- Gateway 1.3 协议
 - 自动重连
 - 回复消息时保留 `chat_id`
 - 支持按 `user:<userId>` 发送（前提：插件之前已收到过该用户私聊，已缓存 `chat_id`）
@@ -91,8 +93,6 @@ openclaw plugins install ./openclaw-sharecrm-v<version>.zip
 - `openclaw.plugin.json`
 - `README.md`
 
----
-
 ### 方式三：直接 npm 安装（适合已能稳定访问 npm 的环境）
 
 ```bash
@@ -100,6 +100,89 @@ openclaw plugins install @openclaw-fs/sharecrm
 ```
 
 如果你的环境已经配置了国内 npm 镜像，也可以直接用现有镜像源安装。
+
+---
+
+## 从旧版迁移到 V1.3（推荐按这个顺序做）
+
+如果你当前装的是 `1.2.x`，推荐优先用 `npmmirror` 完成迁移。
+
+### 第一步：先检查 OpenClaw 版本
+
+```bash
+openclaw --version
+```
+
+V1.3 插件建议配合 `OpenClaw v2026.3.23-2` 或更高兼容版本使用。
+
+如果版本过旧，先升级 OpenClaw，再继续下面步骤：
+
+```bash
+npm --registry=https://registry.npmmirror.com install -g openclaw@latest
+```
+
+### 第二步：把 npm 源切到 npmmirror
+
+```bash
+npm config set registry https://registry.npmmirror.com
+```
+
+### 第三步：卸载旧插件目录
+
+Linux / macOS：
+
+```bash
+rm -rf ~/.openclaw/extensions/sharecrm
+```
+
+Windows（PowerShell）：
+
+```powershell
+Remove-Item "$HOME/.openclaw/extensions/sharecrm" -Recurse -Force
+```
+
+### 第四步：清理旧插件残留配置
+
+```bash
+openclaw doctor --fix
+```
+
+如果你之前已经配置过 `channels.sharecrm`，而这时插件还没重新装回去，`doctor` 可能仍提示配置里有旧残留。
+这种情况下，先重新安装插件，再执行配置校验即可。
+
+### 第五步：安装 V1.3
+
+```bash
+openclaw plugins install @openclaw-fs/sharecrm
+```
+
+如果你拿到的是发布 zip，也可以这样装：
+
+```bash
+openclaw plugins install ./openclaw-sharecrm-v<version>.zip
+```
+
+### 第六步：确认安装成功
+
+```bash
+openclaw plugins inspect sharecrm
+openclaw config validate
+openclaw plugins doctor
+```
+
+期望结果：
+
+- `sharecrm` 状态是 `loaded`
+- `openclaw config validate` 通过
+- `openclaw plugins doctor` 没有插件错误
+
+### 第七步：确认 V1.3 行为
+
+V1.3 主要变化：
+
+- Gateway 协议升级到 `1.3`
+- 群聊仍然要求 `@Bot` 才进入 Gateway
+- 但插件现在会接收 Gateway 透传的最近 `10` 条群聊历史，帮助 Agent 正确理解上下文后再回复
 
 ---
 
@@ -263,8 +346,6 @@ openclaw plugins update @openclaw-fs/sharecrm
 ```bash
 openclaw plugins install ./openclaw-sharecrm-v<version>.zip
 ```
-
----
 
 ## 常见问题
 

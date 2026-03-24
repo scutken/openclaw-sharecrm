@@ -4,15 +4,11 @@
  * 实现 ChannelPlugin 接口，通过 SSE 连接 ShareCRM IM Gateway
  */
 
-import type { ChannelMeta, ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk";
-import {
-  buildBaseChannelStatusSummary,
-  createDefaultChannelRuntimeState,
-  DEFAULT_ACCOUNT_ID,
-  PAIRING_APPROVED_MESSAGE,
-} from "openclaw/plugin-sdk";
+import type { ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk/core";
+import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/core";
+import { PAIRING_APPROVED_MESSAGE } from "openclaw/plugin-sdk/channel-status";
 import { listAccountIds, resolveAccount } from "./accounts.js";
-import { shareCrmOnboardingAdapter } from "./onboarding.js";
+import { shareCrmSetupWizard } from "./onboarding.js";
 import {
   getActiveClient,
   getBotInfo,
@@ -101,7 +97,33 @@ export async function resolveShareCrmSendTarget(params: {
   throw new Error(`ShareCRM: invalid target \"${rawTarget || target}\", expected chat:<chat_id> or user:<userId>`);
 }
 
-const meta: ChannelMeta = {
+function createDefaultRuntimeState(accountId: string) {
+  return {
+    accountId,
+    running: false,
+    lastStartAt: null,
+    lastStopAt: null,
+    lastError: null,
+  };
+}
+
+function buildChannelStatusSummary(snapshot: {
+  configured?: boolean | null;
+  running?: boolean | null;
+  lastStartAt?: number | null;
+  lastStopAt?: number | null;
+  lastError?: string | null;
+}) {
+  return {
+    configured: Boolean(snapshot.configured),
+    running: Boolean(snapshot.running),
+    lastStartAt: snapshot.lastStartAt ?? null,
+    lastStopAt: snapshot.lastStopAt ?? null,
+    lastError: snapshot.lastError ?? null,
+  };
+}
+
+const meta = {
   id: CHANNEL_ID,
   label: "ShareCRM",
   selectionLabel: "ShareCRM IM",
@@ -116,7 +138,7 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
   meta: {
     ...meta,
   },
-  onboarding: shareCrmOnboardingAdapter,
+  setupWizard: shareCrmSetupWizard,
   pairing: {
     idLabel: "shareCrmUserId",
     normalizeAllowEntry: (entry) => entry.replace(/^sharecrm:/i, "").trim(),
@@ -392,9 +414,9 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
     },
   },
   status: {
-    defaultRuntime: createDefaultChannelRuntimeState(DEFAULT_ACCOUNT_ID, {}),
+    defaultRuntime: createDefaultRuntimeState(DEFAULT_ACCOUNT_ID),
     buildChannelSummary: ({ snapshot }) => ({
-      ...buildBaseChannelStatusSummary(snapshot),
+      ...buildChannelStatusSummary(snapshot),
     }),
     buildAccountSnapshot: ({ account, runtime }) => ({
       ...(getBotInfo(account.accountId)

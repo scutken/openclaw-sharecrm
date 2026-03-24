@@ -1,5 +1,6 @@
 {
   "id": "sharecrm",
+  "kind": "channel",
   "channels": ["sharecrm"],
   "configSchema": {
     "type": "object",

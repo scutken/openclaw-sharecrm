@@ -6,21 +6,18 @@
  */
 
 import type {
-  OpenClawConfig,
   RuntimeEnv,
-  HistoryEntry,
-  ReplyPayload,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/runtime-env";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
+import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
+import type { HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import {
   buildPendingHistoryContextFromMap,
   clearHistoryEntriesIfEnabled,
-  createScopedPairingAccess,
   DEFAULT_GROUP_HISTORY_LIMIT,
   recordPendingHistoryEntryIfEnabled,
-  createReplyPrefixContext,
-  createTypingCallbacks,
-  PAIRING_APPROVED_MESSAGE,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/reply-history";
+import { createChannelPairingController } from "openclaw/plugin-sdk/channel-pairing";
 import { resolveAccount, listEnabledAccounts } from "./accounts.js";
 import { ShareCrmClient } from "./client.js";
 import { getShareCrmRuntime } from "./runtime.js";
@@ -254,7 +251,7 @@ async function handleInboundMessage(params: {
   );
 
   if (!isGroup) {
-    const pairing = createScopedPairingAccess({
+    const pairing = createChannelPairingController({
       core,
       channel: CHANNEL_ID,
       accountId: account.accountId,
@@ -447,15 +444,12 @@ async function handleInboundMessage(params: {
   });
 
   // 构建回复分发器
-  const prefixContext = createReplyPrefixContext({ cfg, agentId: route.agentId });
   const textChunkLimit = core.channel.text.resolveTextChunkLimit(cfg, CHANNEL_ID, account.accountId, {
     fallbackLimit: 4000,
   });
 
   const { dispatcher, replyOptions, markDispatchIdle } =
     core.channel.reply.createReplyDispatcherWithTyping({
-      responsePrefix: prefixContext.responsePrefix,
-      responsePrefixContextProvider: prefixContext.responsePrefixContextProvider,
       humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, route.agentId),
       deliver: async (payload: ReplyPayload) => {
         const replyText = payload.text ?? "";
@@ -487,7 +481,6 @@ async function handleInboundMessage(params: {
         dispatcher,
         replyOptions: {
           ...replyOptions,
-          onModelSelected: prefixContext.onModelSelected,
         },
       }),
   });
