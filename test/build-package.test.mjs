@@ -44,6 +44,7 @@ test("build-package creates a zip with a sharecrm top-level directory", async ()
     await execFileAsync("node", ["./scripts/build-package.mjs"], { cwd: projectDir });
     assert.deepEqual(await readZipEntries(zipPath), [
       "sharecrm/README.md",
+      "sharecrm/dist/setup-entry.js",
       "sharecrm/dist/sharecrm.js",
       "sharecrm/openclaw.plugin.json",
       "sharecrm/package.json",

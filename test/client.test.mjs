@@ -19,9 +19,9 @@ test("buildSseUrl appends token and gateway protocol version", () => {
 });
 
 test("buildSseUrl preserves custom base path", () => {
-  const url = buildSseUrl("https://example.com/custom/base", "token-456", "1.2.1");
+  const url = buildSseUrl("https://example.com/custom/base", "token-456", "1.3.1");
 
-  assert.equal(url.toString(), "https://example.com/custom/base/im-gateway/bot/events?token=token-456&version=1.2.1");
+  assert.equal(url.toString(), "https://example.com/custom/base/im-gateway/bot/events?token=token-456&version=1.3.1");
 });
 
 test("buildSendMessagePayload includes reply_message_id when provided", () => {

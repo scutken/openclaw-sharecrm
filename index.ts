@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
+import { defineChannelPluginEntry, emptyPluginConfigSchema } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { shareCrmPlugin } from "./src/channel.js";
 import { isLikelyShareCrmChatId } from "./src/channel.js";
 import { setShareCrmRuntime } from "./src/runtime.js";
@@ -127,14 +127,14 @@ export async function rewriteShareCrmCronDeliveryFromSession(params: {
   return patchShareCrmDelivery(params.target, resolved);
 }
 
-const plugin = {
+const plugin = defineChannelPluginEntry({
   id: "sharecrm",
   name: "ShareCRM",
   description: "ShareCRM IM Gateway channel plugin for OpenClaw",
   configSchema: emptyPluginConfigSchema(),
-  register(api: OpenClawPluginApi) {
-    setShareCrmRuntime(api.runtime);
-    api.registerChannel({ plugin: shareCrmPlugin });
+  plugin: shareCrmPlugin,
+  setRuntime: setShareCrmRuntime,
+  registerFull(api: OpenClawPluginApi) {
     api.on("before_tool_call", async (event, ctx) => {
       if (event.toolName !== "cron" || !ctx.sessionKey) return;
 
@@ -165,6 +165,6 @@ const plugin = {
       };
     });
   },
-};
+});
 
 export default plugin;

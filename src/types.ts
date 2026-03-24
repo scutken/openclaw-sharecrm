@@ -48,7 +48,17 @@ export interface ShareCrmSseMessageEvent {
     bot_full_id?: string;
     message_type?: string;
     reply_message_id?: number;
+    history_messages?: ShareCrmGatewayHistoryMessage[];
   };
+}
+
+export interface ShareCrmGatewayHistoryMessage {
+  message_id?: string;
+  message_type?: string;
+  sender_id?: string;
+  full_sender_id?: string;
+  content?: string;
+  message_timestamp?: number;
 }
 
 /** SSE 错误事件 */

@@ -9,6 +9,7 @@ const projectDir = path.resolve(scriptDir, "..");
 
 const requiredFiles = [
   "dist/sharecrm.js",
+  "dist/setup-entry.js",
   "package.json",
   "openclaw.plugin.json",
   "README.md",
