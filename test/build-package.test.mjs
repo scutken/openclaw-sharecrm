@@ -53,3 +53,12 @@ test("build-package creates a zip with a sharecrm top-level directory", async ()
     await rm(zipPath, { force: true });
   }
 });
+
+test("channel plugin follows the SDK builder pattern", async () => {
+  const source = await readFile(path.join(projectDir, "src/channel.ts"), "utf8");
+
+  assert.match(source, /createChannelPluginBase/);
+  assert.match(source, /createChatChannelPlugin/);
+  assert.match(source, /const shareCrmPluginBase = createChannelPluginBase/);
+  assert.match(source, /export const shareCrmPlugin = createChatChannelPlugin/);
+});
