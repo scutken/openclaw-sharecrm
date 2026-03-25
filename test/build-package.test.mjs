@@ -62,3 +62,12 @@ test("channel plugin follows the SDK builder pattern", async () => {
   assert.match(source, /const shareCrmPluginBase = createChannelPluginBase/);
   assert.match(source, /export const shareCrmPlugin = createChatChannelPlugin/);
 });
+
+test("package declares openclaw as an install dependency for plugin-sdk imports", async () => {
+  const packageJson = JSON.parse(
+    await readFile(path.join(projectDir, "package.json"), "utf8"),
+  );
+
+  assert.equal(packageJson.dependencies?.openclaw, "^2026.3.23-2");
+  assert.equal(packageJson.peerDependencies?.openclaw, undefined);
+});

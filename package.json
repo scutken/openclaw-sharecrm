@@ -13,13 +13,8 @@
     "build:package": "npm run build && node ./scripts/build-package.mjs",
     "test": "npm run build && node --test test/**/*.test.mjs"
   },
-  "peerDependencies": {
+  "dependencies": {
     "openclaw": "^2026.3.23-2"
-  },
-  "peerDependenciesMeta": {
-    "openclaw": {
-      "optional": true
-    }
   },
   "engines": {
     "node": ">=20"
@@ -52,7 +47,6 @@
   "devDependencies": {
     "@types/node": "^25.4.0",
     "esbuild": "^0.27.3",
-    "openclaw": "^2026.3.23-2",
     "typescript": "^5.9.3"
   }
 }
