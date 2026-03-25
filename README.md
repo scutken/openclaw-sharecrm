@@ -101,6 +101,13 @@ openclaw plugins install @openclaw-fs/sharecrm
 
 如果你的环境已经配置了国内 npm 镜像，也可以直接用现有镜像源安装。
 
+如果安装完成后你发现插件目录下没有依赖，或需要手动补装依赖，请进入插件安装目录再执行一次 npm：
+
+```bash
+cd ~/.openclaw/extensions/sharecrm
+npm install
+```
+
 ---
 
 ## 从旧版迁移到 V1.3（推荐按这个顺序做）
@@ -393,6 +400,7 @@ openclaw plugins install ./openclaw-sharecrm-v<version>.zip
 ## 给维护者
 
 ```bash
+cd openclaw-sharecrm
 npm install
 npm test
 ```
