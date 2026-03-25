@@ -4,8 +4,8 @@
  * 实现 ChannelPlugin 接口，通过 SSE 连接 ShareCRM IM Gateway
  */
 
-import type { ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk/core";
-import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/core";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
+import { createChatChannelPlugin, createChannelPluginBase, DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/core";
 import { PAIRING_APPROVED_MESSAGE } from "openclaw/plugin-sdk/channel-status";
 import { listAccountIds, resolveAccount } from "./accounts.js";
 import { shareCrmSetupWizard } from "./onboarding.js";
@@ -133,38 +133,12 @@ const meta = {
   order: 95,
 };
 
-export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
+const shareCrmPluginBase = createChannelPluginBase<ResolvedShareCrmAccount>({
   id: CHANNEL_ID,
   meta: {
     ...meta,
   },
   setupWizard: shareCrmSetupWizard,
-  pairing: {
-    idLabel: "shareCrmUserId",
-    normalizeAllowEntry: (entry) => entry.replace(/^sharecrm:/i, "").trim(),
-    notifyApproval: async ({ cfg, id, runtime }) => {
-      const log = runtime?.log ?? console.log;
-      const normalizedUserId = id.replace(/^sharecrm:/i, "").trim();
-      if (!normalizedUserId) return;
-
-      const preferredAccount = resolveAccount(cfg);
-      const target = resolveDirectChatTargetForUser(normalizedUserId, preferredAccount.accountId);
-      if (!target) {
-        log(`sharecrm: pairing approved for ${normalizedUserId}, but no direct chat_id mapping found; skip notify`);
-        return;
-      }
-
-      const client = getActiveClient(target.accountId);
-      if (!client) {
-        log(
-          `sharecrm: pairing approved for ${normalizedUserId}, but account ${target.accountId} is not connected`,
-        );
-        return;
-      }
-
-      await client.sendMessage(target.chatId, PAIRING_APPROVED_MESSAGE);
-    },
-  },
   capabilities: {
     chatTypes: ["direct", "channel"],
     polls: false,
@@ -376,17 +350,133 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
       };
     },
   },
-  messaging: {
-    normalizeTarget: normalizeShareCrmTarget,
-    targetResolver: {
-      looksLikeId: (id) => Boolean(id && isValidShareCrmTarget(id)),
-      hint: "<chat:<env:ea:sessionId:parentSessionId>|user:<userId>>",
+});
+
+async function notifyShareCrmPairingApproval(params: {
+  cfg: OpenClawConfig;
+  id: string;
+  runtime?: { log?: (message: string) => void };
+  message: string;
+}): Promise<void> {
+  const log = params.runtime?.log ?? console.log;
+  const normalizedUserId = params.id.replace(/^sharecrm:/i, "").trim();
+  if (!normalizedUserId) return;
+
+  const preferredAccount = resolveAccount(params.cfg);
+  const target = resolveDirectChatTargetForUser(normalizedUserId, preferredAccount.accountId);
+  if (!target) {
+    log(`sharecrm: pairing approved for ${normalizedUserId}, but no direct chat_id mapping found; skip notify`);
+    return;
+  }
+
+  const client = getActiveClient(target.accountId);
+  if (!client) {
+    log(
+      `sharecrm: pairing approved for ${normalizedUserId}, but account ${target.accountId} is not connected`,
+    );
+    return;
+  }
+
+  await client.sendMessage(target.chatId, params.message);
+}
+
+export const shareCrmPlugin = createChatChannelPlugin<ResolvedShareCrmAccount>({
+  base: {
+    id: shareCrmPluginBase.id,
+    meta: shareCrmPluginBase.meta,
+    setup: shareCrmPluginBase.setup,
+    setupWizard: shareCrmPluginBase.setupWizard,
+    capabilities: shareCrmPluginBase.capabilities!,
+    agentPrompt: shareCrmPluginBase.agentPrompt,
+    reload: shareCrmPluginBase.reload,
+    configSchema: shareCrmPluginBase.configSchema,
+    config: shareCrmPluginBase.config!,
+    messaging: {
+      normalizeTarget: normalizeShareCrmTarget,
+      targetResolver: {
+        looksLikeId: (id) => Boolean(id && isValidShareCrmTarget(id)),
+        hint: "<chat:<env:ea:sessionId:parentSessionId>|user:<userId>>",
+      },
+    },
+    directory: {
+      self: async () => null,
+      listPeers: async () => [],
+      listGroups: async () => [],
+    },
+    status: {
+      defaultRuntime: createDefaultRuntimeState(DEFAULT_ACCOUNT_ID),
+      buildChannelSummary: ({ snapshot }) => ({
+        ...buildChannelStatusSummary(snapshot),
+      }),
+      buildAccountSnapshot: ({ account, runtime }) => ({
+        ...(getBotInfo(account.accountId)
+          ? {
+              botFullId: getBotInfo(account.accountId)?.botFullId,
+              protocolVersion: getBotInfo(account.accountId)?.version ?? null,
+              maxLifetime: getBotInfo(account.accountId)?.maxLifetime ?? null,
+            }
+          : {}),
+        accountId: account.accountId,
+        enabled: account.enabled,
+        configured: account.configured,
+        name: account.name,
+        gatewayBaseUrl: account.gatewayBaseUrl,
+        appId: account.appId,
+        connected: isAccountConnected(account.accountId),
+        running: runtime?.running ?? false,
+        lastStartAt: runtime?.lastStartAt ?? null,
+        lastStopAt: runtime?.lastStopAt ?? null,
+        lastError: runtime?.lastError ?? null,
+      }),
+    },
+    gateway: {
+      startAccount: async (ctx) => {
+        const { monitorShareCrmProvider } = await import("./monitor.js");
+        const account = resolveAccount(ctx.cfg, ctx.accountId);
+        ctx.log?.info(
+          `starting sharecrm[${ctx.accountId}] (gateway: ${account.gatewayBaseUrl || "not configured"})`,
+        );
+        return monitorShareCrmProvider({
+          config: ctx.cfg,
+          runtime: ctx.runtime,
+          abortSignal: ctx.abortSignal,
+          accountId: ctx.accountId,
+        });
+      },
     },
   },
-  directory: {
-    self: async () => null,
-    listPeers: async () => [],
-    listGroups: async () => [],
+  security: {
+    dm: {
+      channelKey: CHANNEL_ID,
+      resolvePolicy: (account) => account.config?.dmPolicy,
+      resolveAllowFrom: (account) => account.config?.allowFrom ?? [],
+      defaultPolicy: "open",
+      normalizeEntry: (entry) => entry.replace(/^sharecrm:/i, "").trim(),
+    },
+    collectWarnings: ({ cfg, accountId }) => {
+      const account = resolveAccount(cfg, accountId);
+      const warnings: string[] = [];
+      if (!account.configured) {
+        warnings.push(
+          `- ShareCRM[${account.accountId}]: not configured (missing gatewayBaseUrl, appId or appSecret).`,
+        );
+      }
+      if (account.config?.dmPolicy === "open") {
+        warnings.push(
+          `- ShareCRM[${account.accountId}]: dmPolicy="open" allows any user to message the bot.`,
+        );
+      }
+      return warnings;
+    },
+  },
+  pairing: {
+    text: {
+      idLabel: "shareCrmUserId",
+      message: PAIRING_APPROVED_MESSAGE,
+      normalizeAllowEntry: (entry) => entry.replace(/^sharecrm:/i, "").trim(),
+      notify: async ({ cfg, id, runtime, message }) =>
+        notifyShareCrmPairingApproval({ cfg, id, runtime, message }),
+    },
   },
   outbound: {
     deliveryMode: "direct",
@@ -413,45 +503,4 @@ export const shareCrmPlugin: ChannelPlugin<ResolvedShareCrmAccount> = {
       return { channel: CHANNEL_ID, ...result };
     },
   },
-  status: {
-    defaultRuntime: createDefaultRuntimeState(DEFAULT_ACCOUNT_ID),
-    buildChannelSummary: ({ snapshot }) => ({
-      ...buildChannelStatusSummary(snapshot),
-    }),
-    buildAccountSnapshot: ({ account, runtime }) => ({
-      ...(getBotInfo(account.accountId)
-        ? {
-            botFullId: getBotInfo(account.accountId)?.botFullId,
-            protocolVersion: getBotInfo(account.accountId)?.version ?? null,
-            maxLifetime: getBotInfo(account.accountId)?.maxLifetime ?? null,
-          }
-        : {}),
-      accountId: account.accountId,
-      enabled: account.enabled,
-      configured: account.configured,
-      name: account.name,
-      gatewayBaseUrl: account.gatewayBaseUrl,
-      appId: account.appId,
-      connected: isAccountConnected(account.accountId),
-      running: runtime?.running ?? false,
-      lastStartAt: runtime?.lastStartAt ?? null,
-      lastStopAt: runtime?.lastStopAt ?? null,
-      lastError: runtime?.lastError ?? null,
-    }),
-  },
-  gateway: {
-    startAccount: async (ctx) => {
-      const { monitorShareCrmProvider } = await import("./monitor.js");
-      const account = resolveAccount(ctx.cfg, ctx.accountId);
-      ctx.log?.info(
-        `starting sharecrm[${ctx.accountId}] (gateway: ${account.gatewayBaseUrl || "not configured"})`,
-      );
-      return monitorShareCrmProvider({
-        config: ctx.cfg,
-        runtime: ctx.runtime,
-        abortSignal: ctx.abortSignal,
-        accountId: ctx.accountId,
-      });
-    },
-  },
-};
+});
