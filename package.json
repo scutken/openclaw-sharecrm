@@ -26,6 +26,7 @@
     "README.md"
   ],
   "openclaw": {
+    "hooks":{},
     "extensions": [
       "dist/sharecrm.js"
     ],
