@@ -2,6 +2,113 @@
   "id": "sharecrm",
   "kind": "channel",
   "channels": ["sharecrm"],
+  "channelConfigs": {
+    "sharecrm": {
+      "label": "ShareCRM",
+      "description": "ShareCRM IM Gateway messaging via 纷享销客企信。",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "gatewayBaseUrl": { "type": "string" },
+          "appId": { "type": "string" },
+          "appSecret": { "type": "string" },
+          "dmPolicy": {
+            "type": "string",
+            "enum": ["open", "pairing", "allowlist", "disabled"]
+          },
+          "allowFrom": {
+            "type": "array",
+            "items": { "oneOf": [{ "type": "string" }, { "type": "number" }] }
+          },
+          "groupPolicy": {
+            "type": "string",
+            "enum": ["open", "allowlist", "disabled"]
+          },
+          "groupAllowFrom": {
+            "type": "array",
+            "items": { "oneOf": [{ "type": "string" }, { "type": "number" }] }
+          },
+          "requireMention": { "type": "boolean" },
+          "chatId": { "type": "string" },
+          "historyLimit": { "type": "integer", "minimum": 0 },
+          "textChunkLimit": { "type": "integer", "minimum": 1 },
+          "accounts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "name": { "type": "string" },
+                "gatewayBaseUrl": { "type": "string" },
+                "appId": { "type": "string" },
+                "appSecret": { "type": "string" },
+                "dmPolicy": {
+                  "type": "string",
+                  "enum": ["open", "pairing", "allowlist", "disabled"]
+                },
+                "allowFrom": {
+                  "type": "array",
+                  "items": { "oneOf": [{ "type": "string" }, { "type": "number" }] }
+                },
+                "groupPolicy": {
+                  "type": "string",
+                  "enum": ["open", "allowlist", "disabled"]
+                },
+                "groupAllowFrom": {
+                  "type": "array",
+                  "items": { "oneOf": [{ "type": "string" }, { "type": "number" }] }
+                },
+                "historyLimit": { "type": "integer", "minimum": 0 },
+                "textChunkLimit": { "type": "integer", "minimum": 1 }
+              }
+            }
+          }
+        },
+        "required": ["dmPolicy", "groupPolicy"],
+        "additionalProperties": false
+      },
+      "uiHints": {
+        "": {
+          "label": "ShareCRM",
+          "help": "ShareCRM IM channel provider configuration (纷享销客企信)."
+        },
+        "dmPolicy": {
+          "label": "DM Policy",
+          "help": "Direct message access control. \"pairing\" requires owner approval."
+        },
+        "groupPolicy": {
+          "label": "Group Policy",
+          "help": "Group chat access control. \"open\" allows all groups."
+        },
+        "gatewayBaseUrl": {
+          "label": "Gateway Base URL",
+          "help": "ShareCRM IM Gateway base URL."
+        },
+        "appId": {
+          "label": "App ID",
+          "help": "ShareCRM bot application ID."
+        },
+        "appSecret": {
+          "label": "App Secret",
+          "help": "ShareCRM bot application secret."
+        },
+        "requireMention": {
+          "label": "Require Mention",
+          "help": "Require @mention in group chats to trigger the bot."
+        },
+        "historyLimit": {
+          "label": "History Limit",
+          "help": "Number of pending group messages to inject as context."
+        },
+        "textChunkLimit": {
+          "label": "Text Chunk Limit",
+          "help": "Max characters per outbound message chunk."
+        }
+      }
+    }
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

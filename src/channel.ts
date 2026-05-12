@@ -140,13 +140,13 @@ const shareCrmPluginBase = createChannelPluginBase<ResolvedShareCrmAccount>({
   },
   setupWizard: shareCrmSetupWizard,
   capabilities: {
-    chatTypes: ["direct", "channel"],
+    chatTypes: ["direct", "channel", "group"],
     polls: false,
     threads: false,
     media: false,
     reactions: false,
     edit: false,
-    reply: false,
+    reply: true,
   },
   agentPrompt: {
     messageToolHints: () => [
