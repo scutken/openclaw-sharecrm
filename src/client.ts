@@ -62,6 +62,97 @@ export function buildSendMessagePayload(
   return payload;
 }
 
+/**
+ * 使用 Node.js 原生 https 模块发送 HTTP 请求（作为 fetch 的 fallback）
+ */
+function httpsRequest(
+  url: string,
+  options: { method: string; headers: Record<string, string>; body?: string },
+): Promise<{ status: number; json: () => Promise<any> }> {
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(url);
+    const httpModule = parsedUrl.protocol === "https:" ? https : http;
+
+    const reqOptions: https.RequestOptions = {
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port || (parsedUrl.protocol === "https:" ? 443 : 80),
+      path: parsedUrl.pathname + parsedUrl.search,
+      method: options.method,
+      headers: options.headers,
+      timeout: 15000,
+    };
+
+    const req = httpModule.request(reqOptions, (res) => {
+      let data = "";
+      res.on("data", (chunk: Buffer) => (data += chunk.toString()));
+      res.on("end", () => {
+        resolve({
+          status: res.statusCode ?? 0,
+          json: () => Promise.resolve(JSON.parse(data)),
+        });
+      });
+    });
+
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("httpsRequest timeout"));
+    });
+
+    if (options.body) {
+      req.write(options.body);
+    }
+    req.end();
+  });
+}
+
+/**
+ * 带 fetch→https fallback 的 HTTP 请求
+ * 自动记录参数、耗时、返回值
+ */
+async function requestWithFallback(
+  log: (...args: any[]) => void,
+  label: string,
+  url: string,
+  options: { method: string; headers: Record<string, string>; body?: string },
+): Promise<{ status: number; json: () => Promise<any> }> {
+  const params = {
+    method: options.method,
+    url,
+    body: options.body ? JSON.parse(options.body) : undefined,
+  };
+  const start = Date.now();
+
+  // 尝试 fetch
+  try {
+    const response = await fetch(url, options);
+    const duration = Date.now() - start;
+    const data = await response.clone().json().catch(() => null);
+    log(`sharecrm: ${label} OK (fetch)`, { params, durationMs: duration, status: response.status, data });
+    return response as any;
+  } catch (fetchErr) {
+    const duration = Date.now() - start;
+    log(`sharecrm: ${label} fetch 失败 (${duration}ms), 降级到 https: ${String(fetchErr)}`);
+  }
+
+  // 降级到 https
+  try {
+    const response = await httpsRequest(url, options);
+    const duration = Date.now() - start;
+    const data = await response.json();
+    // 重新包装成 fetch Response 风格
+    log(`sharecrm: ${label} OK (https fallback)`, { params, durationMs: duration, status: response.status, data });
+    return {
+      status: response.status,
+      json: () => Promise.resolve(data),
+    } as any;
+  } catch (httpsErr) {
+    const duration = Date.now() - start;
+    log(`sharecrm: ${label} https fallback 也失败`, { params, durationMs: duration, error: String(httpsErr) });
+    throw httpsErr;
+  }
+}
+
 export type ShareCrmClientOptions = {
   account: ResolvedShareCrmAccount;
   onConnected: (info: { botFullId: string; protocolVersion?: string; clientVersion?: string; maxLifetime?: number }) => void;
@@ -104,9 +195,11 @@ export class ShareCrmClient {
 
   /** 获取 AccessToken */
   private async fetchAccessToken(): Promise<string> {
+    const log = this.options.log ?? console.log;
     const { gatewayBaseUrl, appId, appSecret } = this.options.account;
+    const url = `${gatewayBaseUrl}/im-gateway/auth/token`;
 
-    const response = await this.fetchImpl(`${gatewayBaseUrl}/im-gateway/auth/token`, {
+    const response = await requestWithFallback(log, "fetchToken", url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ appId, appSecret }),
@@ -403,8 +496,9 @@ export class ShareCrmClient {
       try {
         const token = await this.ensureToken();
         const { gatewayBaseUrl } = this.options.account;
+        const url = `${gatewayBaseUrl}/im-gateway/qixin/message/send`;
 
-        const response = await this.fetchImpl(`${gatewayBaseUrl}/im-gateway/qixin/message/send`, {
+        const response = await requestWithFallback(log, `sendMessage(chatId=${chatId}, attempt=${attempt})`, url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
