@@ -1,6 +1,6 @@
 {
   "name": "@openclaw-fs/sharecrm",
-  "version": "1.3.4",
+  "version": "1.3.5-beta.0",
   "description": "ShareCRM IM Gateway channel plugin for OpenClaw",
   "type": "module",
   "repository": {
