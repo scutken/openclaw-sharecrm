@@ -174,6 +174,7 @@ export class ShareCrmClient {
   private maxLifetimeTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
   private lastEventId: string | null = null;
+  private reconnectAttempt = 0;
   private _connected = false;
   private _connecting = false;
 
@@ -413,6 +414,7 @@ export class ShareCrmClient {
     switch (msg.type) {
       case "connected":
         this._connected = true;
+        this.reconnectAttempt = 0;
         log(`sharecrm: 已连接企信 Bot ${msg.data.bot_full_id}`);
         this.refreshMaxLifetimeTimer(msg.data.max_lifetime);
         if (msg.data.retry != null && msg.data.retry >= 0) {
@@ -463,11 +465,18 @@ export class ShareCrmClient {
     const reconnectInMs = Math.max(1000, maxLifetime - MAX_LIFETIME_RECONNECT_BUFFER_MS);
     const log = this.options.log ?? console.log;
 
-    this.maxLifetimeTimer = setTimeout(() => {
+    this.maxLifetimeTimer = setTimeout(async () => {
       this.maxLifetimeTimer = null;
       log(`sharecrm: SSE 连接即将达到最大生命周期，主动重连`);
-      this.cleanupRequest();
       this._connected = false;
+      // 先刷新 Token 再断开旧连接，避免新连接使用过期 Token
+      try {
+        await this.fetchAccessToken();
+      } catch (err) {
+        log(`sharecrm: maxLifetime 重连时刷新 Token 失败: ${String(err)}`);
+      }
+      this.reconnectAttempt = 0;
+      this.cleanupRequest();
       this.scheduleReconnect(IMMEDIATE_RECONNECT_DELAY_MS);
     }, reconnectInMs);
   }
@@ -562,14 +571,19 @@ export class ShareCrmClient {
     if (this.reconnectTimer) return;
 
     const log = this.options.log ?? console.log;
-    log(`sharecrm: ${delayMs}ms 后重连...`);
+    // 指数退避：连续重连失败时逐步增加延迟，上限 30s
+    const backoffMs = Math.min(delayMs * Math.pow(2, this.reconnectAttempt), 30_000);
+    const label = backoffMs !== delayMs ? ` (backoff ${backoffMs}ms)` : "";
+    log(`sharecrm: ${delayMs}ms 后重连${label}...`);
+
+    this.reconnectAttempt += 1;
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.shouldReconnect) {
         this.connect();
       }
-    }, delayMs);
+    }, backoffMs);
   }
 
   /** 断开连接并停止重连 */
