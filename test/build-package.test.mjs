@@ -21,7 +21,7 @@ async function readZipEntries(zipPath) {
         ].join("\n"),
         zipPath,
       ], { cwd: projectDir });
-      return stdout.trim().split("\n");
+      return stdout.trim().split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean);
     } catch (error) {
       if (error.code !== "ENOENT") {
         throw error;
@@ -38,11 +38,10 @@ test("build-package creates a zip with a sharecrm top-level directory", async ()
   );
   const zipPath = path.join(projectDir, `openclaw-sharecrm-v${packageJson.version}.zip`);
 
-  await execFileAsync("npm", ["run", "build"], { cwd: projectDir });
-
   try {
-    await execFileAsync("node", ["./scripts/build-package.mjs"], { cwd: projectDir });
+    await execFileAsync(process.execPath, ["./scripts/build-package.mjs"], { cwd: projectDir });
     assert.deepEqual(await readZipEntries(zipPath), [
+      "sharecrm/CHANGELOG.md",
       "sharecrm/README.md",
       "sharecrm/dist/setup-entry.js",
       "sharecrm/dist/sharecrm.js",
@@ -63,11 +62,12 @@ test("channel plugin follows the SDK builder pattern", async () => {
   assert.match(source, /export const shareCrmPlugin = createChatChannelPlugin/);
 });
 
-test("package declares openclaw as an install dependency for plugin-sdk imports", async () => {
+test("package declares openclaw as a peer dependency for plugin-sdk imports", async () => {
   const packageJson = JSON.parse(
     await readFile(path.join(projectDir, "package.json"), "utf8"),
   );
 
-  assert.equal(packageJson.dependencies?.openclaw, "^2026.3.23-2");
-  assert.equal(packageJson.peerDependencies?.openclaw, undefined);
+  assert.equal(packageJson.dependencies?.openclaw, undefined);
+  assert.equal(packageJson.peerDependencies?.openclaw, ">=2026.7.1-2");
+  assert.equal(packageJson.devDependencies?.openclaw, "2026.7.1-2");
 });

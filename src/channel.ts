@@ -5,10 +5,17 @@
  */
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
-import { createChatChannelPlugin, createChannelPluginBase, DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/core";
+import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/account-id";
+import { createChatChannelPlugin, createChannelPluginBase } from "openclaw/plugin-sdk/channel-core";
 import { PAIRING_APPROVED_MESSAGE } from "openclaw/plugin-sdk/channel-status";
 import { listAccountIds, resolveAccount } from "./accounts.js";
+import { shareCrmChannelSchema } from "./channel-schema.js";
 import { shareCrmSetupWizard } from "./onboarding.js";
+import {
+  collectDmPolicyWarnings,
+  DEFAULT_DM_POLICY,
+  normalizeAllowFrom,
+} from "./policy.js";
 import {
   getActiveClient,
   getBotInfo,
@@ -127,8 +134,6 @@ const meta = {
   id: CHANNEL_ID,
   label: "ShareCRM",
   selectionLabel: "ShareCRM IM",
-  docsPath: "/channels/sharecrm",
-  docsLabel: "sharecrm",
   blurb: "ShareCRM IM Gateway messaging.",
   order: 95,
 };
@@ -140,10 +145,10 @@ const shareCrmPluginBase = createChannelPluginBase<ResolvedShareCrmAccount>({
   },
   setupWizard: shareCrmSetupWizard,
   capabilities: {
-    chatTypes: ["direct", "channel", "group"],
+    chatTypes: ["direct", "group"],
     polls: false,
     threads: false,
-    media: false,
+    media: true,
     reactions: false,
     edit: false,
     reply: true,
@@ -151,73 +156,13 @@ const shareCrmPluginBase = createChannelPluginBase<ResolvedShareCrmAccount>({
   agentPrompt: {
     messageToolHints: () => [
       "- ShareCRM targeting: omit `target` to reply to the current conversation (auto-inferred). Explicit targets: `user:<userId>` or `chat:<chatId>`.",
-      "- ShareCRM supports text messages only. No markdown rendering, no cards, no media uploads.",
+      "- ShareCRM inbound images are downloaded on the host and attached as local media paths so sandboxed image tools can read them. Outbound is still plain text only — no markdown rendering, no cards, no media uploads.",
       "- Keep messages concise and well-structured using plain text formatting.",
     ],
   },
   reload: { configPrefixes: [`channels.${CHANNEL_ID}`] },
   configSchema: {
-    schema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        enabled: { type: "boolean" },
-        gatewayBaseUrl: { type: "string" },
-        appId: { type: "string" },
-        appSecret: { type: "string" },
-        dmPolicy: {
-          type: "string",
-          enum: ["open", "pairing", "allowlist", "disabled"],
-        },
-        allowFrom: {
-          type: "array",
-          items: { oneOf: [{ type: "string" }, { type: "number" }] },
-        },
-        groupPolicy: {
-          type: "string",
-          enum: ["open", "allowlist", "disabled"],
-        },
-        groupAllowFrom: {
-          type: "array",
-          items: { oneOf: [{ type: "string" }, { type: "number" }] },
-        },
-        requireMention: { type: "boolean" },
-        chatId: { type: "string" },
-        historyLimit: { type: "integer", minimum: 0 },
-        textChunkLimit: { type: "integer", minimum: 1 },
-        accounts: {
-          type: "object",
-          additionalProperties: {
-            type: "object",
-            properties: {
-              enabled: { type: "boolean" },
-              name: { type: "string" },
-              gatewayBaseUrl: { type: "string" },
-              appId: { type: "string" },
-              appSecret: { type: "string" },
-              dmPolicy: {
-                type: "string",
-                enum: ["open", "pairing", "allowlist", "disabled"],
-              },
-              allowFrom: {
-                type: "array",
-                items: { oneOf: [{ type: "string" }, { type: "number" }] },
-              },
-              groupPolicy: {
-                type: "string",
-                enum: ["open", "allowlist", "disabled"],
-              },
-              groupAllowFrom: {
-                type: "array",
-                items: { oneOf: [{ type: "string" }, { type: "number" }] },
-              },
-              historyLimit: { type: "integer", minimum: 0 },
-              textChunkLimit: { type: "integer", minimum: 1 },
-            },
-          },
-        },
-      },
-    },
+    schema: shareCrmChannelSchema,
   },
   config: {
     listAccountIds: (cfg) => listAccountIds(cfg),
@@ -291,7 +236,7 @@ const shareCrmPluginBase = createChannelPluginBase<ResolvedShareCrmAccount>({
     }),
     resolveAllowFrom: ({ cfg, accountId }) => {
       const account = resolveAccount(cfg, accountId);
-      return (account.config?.allowFrom ?? []).map((entry) => String(entry));
+      return normalizeAllowFrom(account.config?.allowFrom);
     },
     formatAllowFrom: ({ allowFrom }) =>
       allowFrom
@@ -307,11 +252,13 @@ const shareCrmPluginBase = createChannelPluginBase<ResolvedShareCrmAccount>({
           `- ShareCRM[${account.accountId}]: not configured (missing gatewayBaseUrl, appId or appSecret).`,
         );
       }
-      if (account.config?.dmPolicy === "open") {
-        warnings.push(
-          `- ShareCRM[${account.accountId}]: dmPolicy="open" allows any user to message the bot.`,
-        );
-      }
+      warnings.push(
+        ...collectDmPolicyWarnings({
+          accountId: account.accountId,
+          dmPolicy: account.config?.dmPolicy,
+          allowFrom: account.config?.allowFrom,
+        }),
+      );
       return warnings;
     },
   },
@@ -450,8 +397,8 @@ export const shareCrmPlugin = createChatChannelPlugin<ResolvedShareCrmAccount>({
       channelKey: CHANNEL_ID,
       resolvePolicy: (account) => account.config?.dmPolicy,
       resolveAllowFrom: (account) => account.config?.allowFrom ?? [],
-      defaultPolicy: "open",
-      normalizeEntry: (entry) => entry.replace(/^sharecrm:/i, "").trim(),
+      defaultPolicy: DEFAULT_DM_POLICY,
+      normalizeEntry: (entry) => entry.replace(/^sharecrm:/i, "").replace(/^user:/i, "").trim(),
     },
     collectWarnings: ({ cfg, accountId }) => {
       const account = resolveAccount(cfg, accountId);
@@ -461,11 +408,13 @@ export const shareCrmPlugin = createChatChannelPlugin<ResolvedShareCrmAccount>({
           `- ShareCRM[${account.accountId}]: not configured (missing gatewayBaseUrl, appId or appSecret).`,
         );
       }
-      if (account.config?.dmPolicy === "open") {
-        warnings.push(
-          `- ShareCRM[${account.accountId}]: dmPolicy="open" allows any user to message the bot.`,
-        );
-      }
+      warnings.push(
+        ...collectDmPolicyWarnings({
+          accountId: account.accountId,
+          dmPolicy: account.config?.dmPolicy,
+          allowFrom: account.config?.allowFrom,
+        }),
+      );
       return warnings;
     },
   },
@@ -473,7 +422,7 @@ export const shareCrmPlugin = createChatChannelPlugin<ResolvedShareCrmAccount>({
     text: {
       idLabel: "shareCrmUserId",
       message: PAIRING_APPROVED_MESSAGE,
-      normalizeAllowEntry: (entry) => entry.replace(/^sharecrm:/i, "").trim(),
+      normalizeAllowEntry: (entry) => entry.replace(/^sharecrm:/i, "").replace(/^user:/i, "").trim(),
       notify: async ({ cfg, id, runtime, message }) =>
         notifyShareCrmPairingApproval({ cfg, id, runtime, message }),
     },
@@ -481,7 +430,7 @@ export const shareCrmPlugin = createChatChannelPlugin<ResolvedShareCrmAccount>({
   outbound: {
     deliveryMode: "direct",
     textChunkLimit: 4000,
-    sendText: async ({ cfg, to, text, accountId }) => {
+    sendText: async ({ cfg, to, text, accountId, replyToId }) => {
       const account = resolveAccount(cfg, accountId ?? undefined);
       const client = getActiveClient(account.accountId);
       if (!client) {
@@ -496,11 +445,10 @@ export const shareCrmPlugin = createChatChannelPlugin<ResolvedShareCrmAccount>({
         fallbackChatId,
       });
 
-      const result = await client.sendMessage(chatId, text);
-      if (!result) {
-        throw new Error("ShareCRM: failed to send message");
-      }
-      return { channel: CHANNEL_ID, ...result };
+      const result = await client.sendMessage(chatId, text, {
+        replyMessageId: replyToId ?? undefined,
+      });
+      return { channel: CHANNEL_ID, messageId: result.messageId, chatId: result.chatId };
     },
   },
 });

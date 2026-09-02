@@ -2,9 +2,23 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  formatInboundImages,
   normalizeGatewayHistoryEntries,
   stripLeadingMention,
 } from "../dist/src/monitor.js";
+
+test("formatInboundImages renders filename-only placeholders", () => {
+  assert.equal(
+    formatInboundImages({
+      message: {
+        type: "mixed",
+        content: "@二哈 图文",
+        images: [{ url: "https://img.example/a", filename: "a.jpg" }],
+      },
+    }),
+    "![a.jpg]",
+  );
+});
 
 test("stripLeadingMention removes bot full id mention", () => {
   assert.deepEqual(stripLeadingMention("@B.fs.bot_demo 你好", "B.fs.bot_demo"), {
@@ -23,6 +37,21 @@ test("stripLeadingMention removes short bot id mention", () => {
 test("stripLeadingMention keeps text when no mention matched", () => {
   assert.deepEqual(stripLeadingMention("大家好", "B.fs.bot_demo"), {
     text: "大家好",
+    matched: false,
+  });
+});
+
+test("stripLeadingMention matches ShareCRM display name aliases", () => {
+  assert.deepEqual(stripLeadingMention("@小助手 帮我看合同", "B.82846.2140", ["小助手"]), {
+    text: "帮我看合同",
+    matched: true,
+  });
+  assert.deepEqual(stripLeadingMention("请 @小助手 帮我看合同", "B.82846.2140", ["小助手"]), {
+    text: "请 @小助手 帮我看合同",
+    matched: true,
+  });
+  assert.deepEqual(stripLeadingMention("小助手帮我看合同", "B.82846.2140", ["小助手"]), {
+    text: "小助手帮我看合同",
     matched: false,
   });
 });

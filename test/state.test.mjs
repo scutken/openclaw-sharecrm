@@ -6,7 +6,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 
 import {
   loadDirectChatBindings,
+  loadLastEventId,
   persistDirectChatBindings,
+  persistLastEventId,
   resolveDirectChatBindingsPath,
 } from "../dist/src/state.js";
 import { setShareCrmRuntime } from "../dist/src/runtime.js";
@@ -51,5 +53,15 @@ test("loadDirectChatBindings returns empty map for missing file", async () => {
   await withTempStateDir(async () => {
     const loaded = await loadDirectChatBindings("missing");
     assert.equal(loaded.size, 0);
+  });
+});
+
+test("persistLastEventId writes and loads the SSE cursor", async () => {
+  await withTempStateDir(async () => {
+    await persistLastEventId("default", "evt-42");
+    assert.equal(await loadLastEventId("default"), "evt-42");
+
+    await persistLastEventId("default", null);
+    assert.equal(await loadLastEventId("default"), null);
   });
 });

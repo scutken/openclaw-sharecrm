@@ -9,4 +9,6 @@ test("README recommends installing release zip via openclaw plugins install", as
   assert.doesNotMatch(readme, /unzip sharecrm\.zip/);
   assert.doesNotMatch(readme, /Expand-Archive/);
   assert.match(readme, /顶层目录是 `sharecrm\/`/);
+  assert.match(readme, /dmPolicy": "pairing"/);
+  assert.doesNotMatch(readme, /npm config set registry/);
 });

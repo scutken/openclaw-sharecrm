@@ -13,6 +13,7 @@ const requiredFiles = [
   "package.json",
   "openclaw.plugin.json",
   "README.md",
+  "CHANGELOG.md",
 ];
 
 const pythonZipScript = [

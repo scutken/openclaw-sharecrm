@@ -15,6 +15,7 @@ import type {
   SendMessageRequest,
   SendMessageResponse,
 } from "./types.js";
+import { redactLogArgs, redactSensitive, redactUrl } from "./log.js";
 
 const DEFAULT_RECONNECT_DELAY_MS = 1000;
 const IMMEDIATE_RECONNECT_DELAY_MS = 50;
@@ -25,7 +26,7 @@ const SEND_RETRY_JITTER_RATIO = 0.2;
 const SEND_RETRY_MAX_ATTEMPTS = 2;
 const SEND_RECONNECT_WAIT_TIMEOUT_MS = 10_000;
 const SEND_RECONNECT_POLL_MS = 250;
-export const SHARECRM_GATEWAY_PROTOCOL_VERSION = "1.3.0";
+export const SHARECRM_GATEWAY_PROTOCOL_VERSION = "1.4.0";
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -88,7 +89,15 @@ function httpsRequest(
       res.on("end", () => {
         resolve({
           status: res.statusCode ?? 0,
-          json: () => Promise.resolve(JSON.parse(data)),
+          json: async () => {
+            const trimmed = data.trim();
+            if (!trimmed) return {};
+            try {
+              return JSON.parse(trimmed);
+            } catch {
+              throw new Error(`ShareCRM: expected JSON response, got: ${trimmed.slice(0, 200)}`);
+            }
+          },
         });
       });
     });
@@ -110,45 +119,79 @@ function httpsRequest(
  * 带 fetch→https fallback 的 HTTP 请求
  * 自动记录参数、耗时、返回值
  */
+function parseJsonBody(body?: string): unknown {
+  if (!body) return undefined;
+  try {
+    return JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+}
+
+async function readResponseJson(response: { json?: () => Promise<unknown>; clone?: () => { json: () => Promise<unknown> } }): Promise<unknown> {
+  try {
+    if (typeof response.clone === "function") {
+      return await response.clone().json();
+    }
+    if (typeof response.json === "function") {
+      return await response.json();
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 async function requestWithFallback(
   log: (...args: any[]) => void,
   label: string,
   url: string,
   options: { method: string; headers: Record<string, string>; body?: string },
+  fetchImpl?: typeof fetch,
 ): Promise<{ status: number; json: () => Promise<any> }> {
+  const safeLog = (...args: unknown[]) => log(...redactLogArgs(args));
   const params = {
     method: options.method,
-    url,
-    body: options.body ? JSON.parse(options.body) : undefined,
+    url: redactUrl(url),
+    body: redactSensitive(parseJsonBody(options.body)),
   };
   const start = Date.now();
 
-  // 尝试 fetch
   try {
-    const response = await fetch(url, options);
+    const response = await (fetchImpl ?? fetch)(url, options);
     const duration = Date.now() - start;
-    const data = await response.clone().json().catch(() => null);
-    log(`sharecrm: ${label} OK (fetch)`, { params, durationMs: duration, status: response.status, data });
+    const data = await readResponseJson(response as { json?: () => Promise<unknown>; clone?: () => { json: () => Promise<unknown> } });
+    safeLog(`sharecrm: ${label} OK (fetch)`, { params, durationMs: duration, status: (response as { status?: number }).status, data: redactSensitive(data) });
+    if (typeof (response as { json?: unknown }).json !== "function") {
+      return {
+        status: (response as { status?: number }).status ?? 0,
+        json: async () => data,
+      } as any;
+    }
+    if (data !== null && typeof (response as { json?: unknown }).json === "function") {
+      return {
+        status: (response as { status?: number }).status ?? 0,
+        json: async () => data,
+      } as any;
+    }
     return response as any;
   } catch (fetchErr) {
     const duration = Date.now() - start;
-    log(`sharecrm: ${label} fetch 失败 (${duration}ms), 降级到 https: ${String(fetchErr)}`);
+    safeLog(`sharecrm: ${label} fetch failed (${duration}ms), falling back to https: ${String(fetchErr)}`);
   }
 
-  // 降级到 https
   try {
     const response = await httpsRequest(url, options);
     const duration = Date.now() - start;
     const data = await response.json();
-    // 重新包装成 fetch Response 风格
-    log(`sharecrm: ${label} OK (https fallback)`, { params, durationMs: duration, status: response.status, data });
+    safeLog(`sharecrm: ${label} OK (https fallback)`, { params, durationMs: duration, status: response.status, data: redactSensitive(data) });
     return {
       status: response.status,
       json: () => Promise.resolve(data),
     } as any;
   } catch (httpsErr) {
     const duration = Date.now() - start;
-    log(`sharecrm: ${label} https fallback 也失败`, { params, durationMs: duration, error: String(httpsErr) });
+    safeLog(`sharecrm: ${label} https fallback also failed`, { params, durationMs: duration, error: String(httpsErr) });
     throw httpsErr;
   }
 }
@@ -159,6 +202,8 @@ export type ShareCrmClientOptions = {
   onMessage: (data: ShareCrmSseEvent & { type: "message" }) => void;
   onDisconnected: (reason: string) => void;
   onError?: (error: Error) => void;
+  onLastEventId?: (lastEventId: string | null) => void;
+  lastEventId?: string | null;
   log?: (...args: any[]) => void;
   fetchImpl?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
@@ -180,6 +225,7 @@ export class ShareCrmClient {
 
   constructor(options: ShareCrmClientOptions) {
     this.options = options;
+    this.lastEventId = options.lastEventId?.trim() || null;
   }
 
   private get fetchImpl(): typeof fetch {
@@ -204,12 +250,12 @@ export class ShareCrmClient {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ appId, appSecret }),
-    });
+    }, this.fetchImpl);
 
     const data: AuthTokenResponse = await response.json();
 
     if (data.code !== 0 || !data.data) {
-      throw new Error(data.msg || "获取 Token 失败");
+      throw new Error(data.msg || "failed to fetch ShareCRM token");
     }
 
     this.accessToken = data.data.accessToken;
@@ -245,7 +291,7 @@ export class ShareCrmClient {
       const { gatewayBaseUrl } = this.options.account;
       const url = buildSseUrl(gatewayBaseUrl, token);
 
-      log(`sharecrm: 正在连接 SSE ${url.toString().replace(/token=[^&]+/, "token=***")}`);
+      log(`sharecrm: connecting SSE ${redactUrl(url.toString())}`);
 
       const httpModule = url.protocol === "https:" ? https : http;
 
@@ -258,6 +304,7 @@ export class ShareCrmClient {
           "Accept": "text/event-stream",
           "Cache-Control": "no-cache",
           "Connection": "keep-alive",
+          "Authorization": `Bearer ${token}`,
         },
       };
 
@@ -272,13 +319,13 @@ export class ShareCrmClient {
         this._connecting = false;
 
         if (res.statusCode !== 200) {
-          log(`sharecrm: SSE 连接失败, statusCode=${res.statusCode}`);
+          log(`sharecrm: SSE connect failed, statusCode=${res.statusCode}`);
           this.cleanupRequest();
           this.scheduleReconnect();
           return;
         }
 
-        log(`sharecrm: SSE 连接已建立, statusCode=${res.statusCode}`);
+        log(`sharecrm: SSE connected, statusCode=${res.statusCode}`);
 
         let buffer = "";
 
@@ -290,7 +337,7 @@ export class ShareCrmClient {
         });
 
         res.on("end", () => {
-          log("sharecrm: SSE 连接已关闭");
+          log("sharecrm: SSE connection closed");
           const wasConnected = this._connected;
           this._connected = false;
           this.cleanupRequest();
@@ -301,7 +348,7 @@ export class ShareCrmClient {
         });
 
         res.on("error", (err) => {
-          log(`sharecrm: SSE 响应错误: ${err.message}`);
+          log(`sharecrm: SSE response error: ${err.message}`);
           const wasConnected = this._connected;
           this._connected = false;
           this.cleanupRequest();
@@ -314,7 +361,7 @@ export class ShareCrmClient {
 
       this.request.on("error", (err) => {
         this._connecting = false;
-        log(`sharecrm: SSE 请求错误: ${err.message}`);
+        log(`sharecrm: SSE request error: ${err.message}`);
         this.cleanupRequest();
         this.options.onError?.(err);
         this.scheduleReconnect();
@@ -322,7 +369,7 @@ export class ShareCrmClient {
 
       this.request.on("timeout", () => {
         this._connecting = false;
-        log("sharecrm: SSE 请求超时");
+        log("sharecrm: SSE request timeout");
         this.cleanupRequest();
         this.scheduleReconnect();
       });
@@ -332,7 +379,7 @@ export class ShareCrmClient {
 
     } catch (err) {
       this._connecting = false;
-      log(`sharecrm: 连接失败: ${String(err)}`);
+      log(`sharecrm: connect failed: ${String(err)}`);
       this.options.onError?.(err instanceof Error ? err : new Error(String(err)));
       this.scheduleReconnect();
     }
@@ -397,13 +444,14 @@ export class ShareCrmClient {
 
     if (meta?.id) {
       this.lastEventId = meta.id;
+      this.options.onLastEventId?.(meta.id);
     }
 
     try {
       const msg: ShareCrmSseEvent = JSON.parse(data);
       this.handleSseEvent(msg);
     } catch (err) {
-      log(`sharecrm: ${eventName} 事件解析失败: ${String(err)}, data=${data}`);
+      log(`sharecrm: failed to parse ${eventName} event: ${String(err)}`);
     }
   }
 
@@ -415,7 +463,7 @@ export class ShareCrmClient {
       case "connected":
         this._connected = true;
         this.reconnectAttempt = 0;
-        log(`sharecrm: 已连接企信 Bot ${msg.data.bot_full_id}`);
+        log(`sharecrm: connected bot ${msg.data.bot_full_id}`);
         this.refreshMaxLifetimeTimer(msg.data.max_lifetime);
         if (msg.data.retry != null && msg.data.retry >= 0) {
           this.reconnectDelayMs = msg.data.retry;
@@ -433,14 +481,15 @@ export class ShareCrmClient {
         break;
 
       case "error":
-        log(`sharecrm: 错误 [${msg.error.code}]: ${msg.error.message}`);
+        log(`sharecrm: error [${msg.error.code}]: ${msg.error.message}`);
         this.options.onError?.(new Error(`[${msg.error.code}] ${msg.error.message}`));
         break;
 
       case "reset":
-        log(`sharecrm: 服务端要求重置事件游标: ${msg.reason}`);
-        log("sharecrm: 无法恢复断线期间的历史消息，将立即重连；此前消息可能未被接收");
+        log(`sharecrm: server reset event cursor: ${msg.reason}`);
+        log("sharecrm: unable to resume missed events; reconnecting immediately");
         this.lastEventId = null;
+        this.options.onLastEventId?.(null);
         this.cleanupRequest();
         this._connected = false;
         this.options.onDisconnected(`SSE reset: ${msg.reason}`);
@@ -467,13 +516,13 @@ export class ShareCrmClient {
 
     this.maxLifetimeTimer = setTimeout(async () => {
       this.maxLifetimeTimer = null;
-      log(`sharecrm: SSE 连接即将达到最大生命周期，主动重连`);
+      log(`sharecrm: SSE connection approaching max lifetime, reconnecting`);
       this._connected = false;
       // 先刷新 Token 再断开旧连接，避免新连接使用过期 Token
       try {
         await this.fetchAccessToken();
       } catch (err) {
-        log(`sharecrm: maxLifetime 重连时刷新 Token 失败: ${String(err)}`);
+        log(`sharecrm: failed to refresh token before maxLifetime reconnect: ${String(err)}`);
       }
       this.reconnectAttempt = 0;
       this.cleanupRequest();
@@ -497,7 +546,7 @@ export class ShareCrmClient {
     chatId: string,
     text: string,
     options?: { replyMessageId?: string | number },
-  ): Promise<{ messageId: string; chatId: string } | null> {
+  ): Promise<{ messageId: string; chatId: string }> {
     const log = this.options.log ?? console.log;
     const payload = buildSendMessagePayload(chatId, text, options);
 
@@ -514,7 +563,7 @@ export class ShareCrmClient {
             "Authorization": `Bearer ${token}`,
           },
           body: JSON.stringify(payload),
-        });
+        }, this.fetchImpl);
 
         const data: SendMessageResponse = await response.json();
 
@@ -524,45 +573,43 @@ export class ShareCrmClient {
 
         if (attempt < SEND_RETRY_MAX_ATTEMPTS) {
           if (data.code === 40100 || data.code === 40101) {
-            log(`sharecrm: 发送消息返回 ${data.code}，刷新 Token 后重试一次`);
+            log(`sharecrm: send returned ${data.code}, refreshing token and retrying once`);
             this.invalidateToken();
             await this.fetchAccessToken();
             continue;
           }
 
           if (data.code === 50001) {
-            log(`sharecrm: Bot 当前未在线，等待 SSE 恢复后重试一次`);
+            log(`sharecrm: bot is offline, waiting for SSE recovery before retry`);
             const recovered = await this.waitForConnectionRecovery();
             if (recovered) {
               continue;
             }
-            log(`sharecrm: SSE 未在重试窗口内恢复，取消发送重试`);
+            log(`sharecrm: SSE did not recover in retry window, skipping send retry`);
           }
 
           if (data.code === 50000) {
             const delayMs = computeRetryDelayMs();
-            log(`sharecrm: 发送消息返回 50000，${delayMs}ms 后重试一次`);
+            log(`sharecrm: send returned 50000, retrying in ${delayMs}ms`);
             await this.sleepImpl(delayMs);
             continue;
           }
         }
 
-        log(`sharecrm: 发送消息失败: ${data.msg || "未知错误"}`);
-        return null;
+        throw new Error(data.msg || `ShareCRM send failed with code ${data.code ?? "unknown"}`);
       } catch (err) {
         if (attempt < SEND_RETRY_MAX_ATTEMPTS) {
           const delayMs = computeRetryDelayMs();
-          log(`sharecrm: 发送消息异常，将在 ${delayMs}ms 后重试一次: ${String(err)}`);
+          log(`sharecrm: send exception, retrying in ${delayMs}ms: ${String(err)}`);
           await this.sleepImpl(delayMs);
           continue;
         }
 
-        log(`sharecrm: 发送消息异常: ${String(err)}`);
-        return null;
+        throw err instanceof Error ? err : new Error(String(err));
       }
     }
 
-    return null;
+    throw new Error("ShareCRM: failed to send message");
   }
 
   /** 安排重连尝试 */
@@ -574,7 +621,7 @@ export class ShareCrmClient {
     // 指数退避：连续重连失败时逐步增加延迟，上限 30s
     const backoffMs = Math.min(delayMs * Math.pow(2, this.reconnectAttempt), 30_000);
     const label = backoffMs !== delayMs ? ` (backoff ${backoffMs}ms)` : "";
-    log(`sharecrm: ${delayMs}ms 后重连${label}...`);
+    log(`sharecrm: reconnecting in ${backoffMs}ms${label}...`);
 
     this.reconnectAttempt += 1;
 

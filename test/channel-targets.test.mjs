@@ -55,7 +55,7 @@ test("resolveShareCrmSendTarget rejects invalid raw target", async () => {
 
 test("resolveShareCrmSendTarget resolves mapped user target", async () => {
   await withTempRuntime(async () => {
-    rememberDirectChatId("default", "7618", "0:fs:session-123:");
+    await rememberDirectChatId("default", "7618", "0:fs:session-123:");
     const resolved = await resolveShareCrmSendTarget({ accountId: "default", to: "user:7618" });
     assert.deepEqual(resolved, { chatId: "0:fs:session-123:" });
   });

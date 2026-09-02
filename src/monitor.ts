@@ -20,8 +20,30 @@ import {
 import { createChannelPairingController } from "openclaw/plugin-sdk/channel-pairing";
 import { resolveAccount, listEnabledAccounts } from "./accounts.js";
 import { ShareCrmClient } from "./client.js";
-import { getShareCrmRuntime } from "./runtime.js";
-import { loadDirectChatBindings, persistDirectChatBindings } from "./state.js";
+import { getShareCrmRuntime, tryGetShareCrmRuntime } from "./runtime.js";
+import { loadDirectChatBindings, loadLastEventId, persistDirectChatBindings, persistLastEventId } from "./state.js";
+import {
+  DEFAULT_DM_POLICY,
+  DEFAULT_GROUP_POLICY,
+  DEFAULT_REQUIRE_MENTION,
+  isDirectMessageAuthorized,
+  isSelfBotMessage,
+  normalizeAllowFrom,
+} from "./policy.js";
+import {
+  ACK_THROTTLE_MS,
+  buildGroupRejectHint,
+  extractAtMentionNames,
+  isLikelyCommandText,
+  pickMessage,
+  REJECT_HINT_THROTTLE_MS,
+  renderStatusMessage,
+  resolveAckSettings,
+  resolveProgressSettings,
+  progressOffsetMs,
+  type GroupRejectReason,
+} from "./status-messages.js";
+import { stageInboundImages } from "./inbound-media.js";
 import type {
   ResolvedShareCrmAccount,
   ShareCrmGatewayHistoryMessage,
@@ -30,12 +52,197 @@ import type {
 
 const CHANNEL_ID = "sharecrm";
 
+function logShareCrm(runtime: RuntimeEnv | undefined, level: "info" | "error", message: string): void {
+  if (level === "info") {
+    if (typeof runtime?.log === "function") {
+      runtime.log(message);
+      return;
+    }
+    console.log(message);
+    return;
+  }
+
+  if (typeof runtime?.error === "function") {
+    runtime.error(message);
+    return;
+  }
+  if (typeof runtime?.log === "function") {
+    runtime.log(message);
+    return;
+  }
+  console.error(message);
+}
+
 // 各账号的活跃客户端
 const activeClients = new Map<string, ShareCrmClient>();
 // 各账号的 Bot 信息
 const botInfo = new Map<string, { botFullId: string; version?: string; maxLifetime?: number }>();
 // Direct 消息会话映射: accountId -> (userId -> chatId)
 const directChatByUserByAccount = new Map<string, Map<string, string>>();
+type ChatProgressState = {
+  startedAt: number;
+  round: number;
+  maxTimes: number;
+  delayMs: number;
+  intervalMs: number;
+  scheduleMs?: number[];
+  messages: string[];
+  senderName: string;
+  botName: string;
+  timer?: ReturnType<typeof setTimeout>;
+  formalStarted: boolean;
+};
+const progressByChat = new Map<string, ChatProgressState>();
+const lastAckAtByChat = new Map<string, number>();
+const lastRejectHintAtByChat = new Map<string, number>();
+
+function progressKey(accountId: string, chatId: string): string {
+  return `${accountId}:${chatId}`;
+}
+
+function rejectHintKey(accountId: string, chatId: string, reason: GroupRejectReason): string {
+  return `${accountId}:${chatId}:${reason}`;
+}
+
+function looksLikeBotAddress(text: string, mentioned: boolean): boolean {
+  return mentioned || /@/.test(text);
+}
+
+async function sendGroupRejectHint(params: {
+  accountId: string;
+  chatId: string;
+  client: ShareCrmClient;
+  reason: GroupRejectReason;
+  names?: string[];
+  replyMessageId?: string | number;
+  error: (message: string) => void;
+}): Promise<void> {
+  const key = rejectHintKey(params.accountId, params.chatId, params.reason);
+  const now = Date.now();
+  const lastAt = lastRejectHintAtByChat.get(key) ?? 0;
+  if (now - lastAt < REJECT_HINT_THROTTLE_MS) {
+    return;
+  }
+
+  const text = buildGroupRejectHint(params.reason, params.names);
+  try {
+    await params.client.sendMessage(params.chatId, text, {
+      replyMessageId: params.replyMessageId,
+    });
+    lastRejectHintAtByChat.set(key, now);
+  } catch (err) {
+    params.error(`sharecrm[${params.accountId}]: failed to send reject hint: ${String(err)}`);
+  }
+}
+
+function clearChatProgress(accountId: string, chatId?: string): void {
+  if (chatId) {
+    const key = progressKey(accountId, chatId);
+    const current = progressByChat.get(key);
+    if (current?.timer) clearTimeout(current.timer);
+    progressByChat.delete(key);
+    return;
+  }
+
+  for (const [key, current] of progressByChat.entries()) {
+    if (!key.startsWith(`${accountId}:`)) continue;
+    if (current.timer) clearTimeout(current.timer);
+    progressByChat.delete(key);
+  }
+}
+
+function markFormalReplyStarted(accountId: string, chatId: string): void {
+  const current = progressByChat.get(progressKey(accountId, chatId));
+  if (!current) return;
+  current.formalStarted = true;
+  if (current.timer) {
+    clearTimeout(current.timer);
+    current.timer = undefined;
+  }
+}
+
+function nextProgressDelayMs(state: ChatProgressState): number | undefined {
+  if (state.round >= state.maxTimes) return undefined;
+  const nextOffset = state.scheduleMs?.length
+    ? progressOffsetMs(state.round, state.scheduleMs, state.intervalMs)
+    : state.round === 0
+      ? state.delayMs
+      : state.delayMs + state.round * state.intervalMs;
+  const waitMs = nextOffset - (Date.now() - state.startedAt);
+  return Math.max(0, waitMs);
+}
+
+function scheduleProgressTick(accountId: string, chatId: string, client: ShareCrmClient, error: (message: string) => void): void {
+  const key = progressKey(accountId, chatId);
+  const current = progressByChat.get(key);
+  if (!current || current.formalStarted || current.round >= current.maxTimes) {
+    return;
+  }
+
+  const delayMs = nextProgressDelayMs(current);
+  if (delayMs == null) return;
+
+  current.timer = setTimeout(async () => {
+    const state = progressByChat.get(key);
+    if (!state || state.formalStarted || state.round >= state.maxTimes) {
+      return;
+    }
+
+    state.round += 1;
+    const text = renderStatusMessage(pickMessage(state.messages), {
+      elapsedMs: Date.now() - state.startedAt,
+      round: state.round,
+      max: state.maxTimes,
+      name: state.senderName,
+      bot: state.botName,
+    });
+    if (text) {
+      try {
+        await client.sendMessage(chatId, text);
+      } catch (err) {
+        error(`sharecrm[${accountId}]: failed to send progress: ${String(err)}`);
+      }
+    }
+
+    if (!state.formalStarted && state.round < state.maxTimes) {
+      scheduleProgressTick(accountId, chatId, client, error);
+    }
+  }, delayMs);
+}
+
+function startChatProgress(params: {
+  accountId: string;
+  chatId: string;
+  client: ShareCrmClient;
+  settings: ReturnType<typeof resolveProgressSettings>;
+  senderName: string;
+  botName: string;
+  error: (message: string) => void;
+}): void {
+  const key = progressKey(params.accountId, params.chatId);
+  const existing = progressByChat.get(key);
+  if (existing && !existing.formalStarted) {
+    return;
+  }
+  if (existing?.timer) {
+    clearTimeout(existing.timer);
+  }
+
+  const next: ChatProgressState = {
+    startedAt: Date.now(),
+    round: 0,
+    maxTimes: params.settings.maxTimes,
+    delayMs: params.settings.delayMs,
+    intervalMs: params.settings.intervalMs,
+    scheduleMs: params.settings.scheduleMs,
+    messages: params.settings.messages,
+    senderName: params.senderName,
+    botName: params.botName,
+    formalStarted: false,
+  };
+  progressByChat.set(key, next);
+  scheduleProgressTick(params.accountId, params.chatId, params.client, params.error);
+}
 
 export function isAccountConnected(accountId: string): boolean {
   return activeClients.get(accountId)?.connected ?? false;
@@ -45,32 +252,94 @@ function getInboundText(data: (ShareCrmSseEvent & { type: "message" })["data"]):
   return data.message?.content?.trim() || data.text || "";
 }
 
+export function formatInboundImages(data: (ShareCrmSseEvent & { type: "message" })["data"]): string {
+  const images = data.message?.images ?? [];
+  const lines: string[] = [];
+  for (const image of images) {
+    const name = image?.filename?.trim() || "image";
+    if (image?.url?.trim() || image?.filename?.trim()) {
+      lines.push(`![${name}]`);
+    }
+  }
+  return lines.join("\n");
+}
+
 function getInboundTimestampSeconds(data: (ShareCrmSseEvent & { type: "message" })["data"]): number {
   return data.timestamp ?? data.date ?? Math.floor(Date.now() / 1000);
 }
 
-export function stripLeadingMention(text: string, botFullId?: string): { text: string; matched: boolean } {
+function uniqueMentionTokens(values: unknown[]): string[] {
+  const tokens: string[] = [];
+  for (const value of values) {
+    const token = String(value ?? "").trim();
+    if (!token) continue;
+    if (tokens.some((entry) => entry.toLowerCase() === token.toLowerCase())) continue;
+    tokens.push(token);
+  }
+  return tokens;
+}
+
+function escapeMentionToken(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function collectMentionCandidates(botFullId?: string, extraAliases?: unknown[]): {
+  ids: string[];
+  names: string[];
+} {
+  const ids = uniqueMentionTokens([
+    botFullId,
+    botFullId?.trim().split(".").pop(),
+  ]);
+  const names = uniqueMentionTokens(extraAliases ?? []).filter(
+    (alias) => !ids.some((id) => id.toLowerCase() === alias.toLowerCase()),
+  );
+  return { ids, names };
+}
+
+function stripLeadingCandidate(text: string, candidate: string, requireAt: boolean): string | null {
+  const escaped = escapeMentionToken(candidate);
+  const regex = new RegExp(`^${requireAt ? "@" : "@?"}${escaped}[,:：，\\s-]*`, "i");
+  if (!regex.test(text)) return null;
+  return text.replace(regex, "").trim();
+}
+
+function hasInlineMention(text: string, candidate: string): boolean {
+  const escaped = escapeMentionToken(candidate);
+  return new RegExp(`@${escaped}(?=$|[,:：，\\s]|[^\\s\\w])`, "i").test(text);
+}
+
+export function stripLeadingMention(
+  text: string,
+  botFullId?: string,
+  extraAliases?: unknown[],
+): { text: string; matched: boolean } {
   const normalized = text.trim();
   if (!normalized) {
     return { text: normalized, matched: false };
   }
-  if (!botFullId) {
+
+  const { ids, names } = collectMentionCandidates(botFullId, extraAliases);
+  if (ids.length === 0 && names.length === 0) {
     return { text: normalized, matched: false };
   }
 
-  const botId = botFullId.trim();
-  const shortId = botId.split(".").pop() ?? botId;
-  const candidates = [botId, shortId].filter(Boolean);
-
-  for (const candidate of candidates) {
-    const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const regex = new RegExp(`^@?${escaped}[,:：，\\s-]*`, "i");
-    if (regex.test(normalized)) {
-      return {
-        text: normalized.replace(regex, "").trim(),
-        matched: true,
-      };
+  for (const id of ids) {
+    const stripped = stripLeadingCandidate(normalized, id, false);
+    if (stripped !== null) {
+      return { text: stripped, matched: true };
     }
+  }
+
+  for (const name of names) {
+    const stripped = stripLeadingCandidate(normalized, name, true);
+    if (stripped !== null) {
+      return { text: stripped, matched: true };
+    }
+  }
+
+  if ([...ids, ...names].some((candidate) => hasInlineMention(normalized, candidate))) {
+    return { text: normalized, matched: true };
   }
 
   return { text: normalized, matched: false };
@@ -120,11 +389,11 @@ export function normalizeGatewayHistoryEntries(params: {
     });
 }
 
-export function rememberDirectChatId(accountId: string, userId: string, chatId: string): void {
-  if (!accountId || !userId || !chatId) return;
+export function rememberDirectChatId(accountId: string, userId: string, chatId: string): Promise<void> {
+  if (!accountId || !userId || !chatId) return Promise.resolve();
   const normalizedUserId = userId.trim();
   const normalizedChatId = chatId.trim();
-  if (!normalizedUserId || !normalizedChatId) return;
+  if (!normalizedUserId || !normalizedChatId) return Promise.resolve();
 
   const accountMap =
     directChatByUserByAccount.get(accountId) ??
@@ -136,9 +405,9 @@ export function rememberDirectChatId(accountId: string, userId: string, chatId: 
 
   accountMap.set(normalizedUserId, normalizedChatId);
 
-  persistDirectChatBindings(accountId, accountMap).catch((error) => {
-    const runtime = getShareCrmRuntime();
-    runtime.logging.getChildLogger({ channel: CHANNEL_ID, accountId }).warn(
+  return persistDirectChatBindings(accountId, accountMap).catch((error) => {
+    const runtime = tryGetShareCrmRuntime();
+    runtime?.logging?.getChildLogger?.({ channel: CHANNEL_ID, accountId }).warn(
       `sharecrm: failed to persist direct chat bindings: ${String(error)}`,
     );
   });
@@ -149,10 +418,10 @@ async function hydrateDirectChatBindings(accountId: string, runtime?: RuntimeEnv
     const bindings = await loadDirectChatBindings(accountId);
     directChatByUserByAccount.set(accountId, bindings);
     if (bindings.size > 0) {
-      (runtime?.log ?? console.log)(`sharecrm[${accountId}]: 已加载 ${bindings.size} 条 userId->chatId 缓存`);
+      logShareCrm(runtime, "info", `sharecrm[${accountId}]: loaded ${bindings.size} userId->chatId bindings`);
     }
   } catch (error) {
-    (runtime?.error ?? console.error)(`sharecrm[${accountId}]: 加载 userId->chatId 缓存失败: ${String(error)}`);
+    logShareCrm(runtime, "error", `sharecrm[${accountId}]: failed to load userId->chatId bindings: ${String(error)}`);
   }
 }
 
@@ -214,8 +483,8 @@ async function handleInboundMessage(params: {
   client: ShareCrmClient;
 }): Promise<void> {
   const { cfg, account, event, runtime, chatHistories, client } = params;
-  const log = runtime?.log ?? console.log;
-  const error = runtime?.error ?? console.error;
+  const log = (message: string) => logShareCrm(runtime, "info", message);
+  const error = (message: string) => logShareCrm(runtime, "error", message);
   const core = getShareCrmRuntime();
 
   const { data } = event;
@@ -224,27 +493,33 @@ async function handleInboundMessage(params: {
   const senderName = data.from.name;
   const chatId = data.chat_id;
   const messageId = data.message_id;
-  const rawText = getInboundText(data);
+  const caption = getInboundText(data);
+  const imagePlaceholder = formatInboundImages(data);
+  const rawText = [caption, imagePlaceholder].filter(Boolean).join("\n");
   const timestampSeconds = getInboundTimestampSeconds(data);
   const replyMessageId = data.reply_message_id;
   const messageType = data.message?.type ?? data.message_type ?? "text";
   const connectedBotInfo = getBotInfo(account.accountId);
+  const botFullId = data.bot_full_id ?? connectedBotInfo?.botFullId;
+  if (isSelfBotMessage({ senderId, botFullId })) {
+    log(`sharecrm[${account.accountId}]: ignoring self-authored message from ${senderId}`);
+    return;
+  }
   const mentionResult = isGroup
-    ? stripLeadingMention(rawText, data.bot_full_id ?? connectedBotInfo?.botFullId)
-    : { text: rawText, matched: true };
-  const text = mentionResult.text || rawText;
+    ? stripLeadingMention(caption || rawText, botFullId, account.config?.mentionAliases)
+    : { text: caption, matched: true };
 
-  log(`sharecrm[${account.accountId}]: 收到消息来自 ${senderName} (${senderId})，会话 ${chatId} (${data.chat_type})`);
+  log(`sharecrm[${account.accountId}]: received message from ${senderName} (${senderId}) in ${chatId} (${data.chat_type})`);
 
   // 记录私聊 userId -> chatId 映射，确保后续回复使用合法 chat_id。
   if (!isGroup) {
-    rememberDirectChatId(account.accountId, senderId, chatId);
+    await rememberDirectChatId(account.accountId, senderId, chatId);
   }
 
   // 私聊策略检查
   const channelCfg = account.config;
-  const dmPolicy = channelCfg?.dmPolicy ?? "open";
-  const configAllowFrom = (channelCfg?.allowFrom ?? []).map(String);
+  const dmPolicy = channelCfg?.dmPolicy ?? DEFAULT_DM_POLICY;
+  const configAllowFrom = normalizeAllowFrom(channelCfg?.allowFrom);
   const historyLimit = Math.max(
     0,
     channelCfg?.historyLimit ?? DEFAULT_GROUP_HISTORY_LIMIT,
@@ -262,11 +537,11 @@ async function handleInboundMessage(params: {
         ? await pairing.readAllowFromStore().catch(() => [])
         : [];
     const effectiveAllowFrom = [...configAllowFrom, ...storeAllowFrom];
-    const dmAllowed =
-      dmPolicy === "open" ||
-      effectiveAllowFrom.some(
-        (entry) => entry === "*" || entry === senderId || entry.toLowerCase() === senderName?.toLowerCase(),
-      );
+    const dmAllowed = isDirectMessageAuthorized({
+      dmPolicy,
+      senderId,
+      allowFrom: effectiveAllowFrom,
+    });
 
     if (!dmAllowed) {
       if (dmPolicy === "pairing") {
@@ -275,7 +550,7 @@ async function handleInboundMessage(params: {
           meta: { name: senderName, chat_id: chatId },
         });
         if (created) {
-          log(`sharecrm[${account.accountId}]: 收到来自 ${senderId} 的配对请求`);
+          log(`sharecrm[${account.accountId}]: pairing request from ${senderId}`);
           const pairingReply = core.channel.pairing.buildPairingReply({
             channel: CHANNEL_ID,
             idLine: `Your ShareCRM user ID: ${senderId}`,
@@ -286,29 +561,49 @@ async function handleInboundMessage(params: {
         return;
       }
       if (dmPolicy === "disabled") {
-        log(`sharecrm[${account.accountId}]: 私聊已禁用，忽略 ${senderId}`);
+        log(`sharecrm[${account.accountId}]: DMs disabled, ignoring ${senderId}`);
         return;
       }
-      log(`sharecrm[${account.accountId}]: 拦截未授权用户 ${senderId} (dmPolicy=${dmPolicy})`);
+      log(`sharecrm[${account.accountId}]: blocked unauthorized sender ${senderId} (dmPolicy=${dmPolicy})`);
       return;
     }
   }
 
   // 群聊策略检查
   if (isGroup) {
-    const groupPolicy = channelCfg?.groupPolicy ?? "disabled";
-    const groupAllowFrom = (channelCfg?.groupAllowFrom ?? []).map(String);
-    const requireMention = channelCfg?.requireMention ?? false;
+    const groupPolicy = channelCfg?.groupPolicy ?? DEFAULT_GROUP_POLICY;
+    const groupAllowFrom = normalizeAllowFrom(channelCfg?.groupAllowFrom);
+    const requireMention = channelCfg?.requireMention ?? DEFAULT_REQUIRE_MENTION;
 
     if (groupPolicy === "disabled") {
-      log(`sharecrm[${account.accountId}]: 群聊已禁用，忽略 ${chatId}`);
+      log(`sharecrm[${account.accountId}]: groups disabled, ignoring ${chatId}`);
+      if (looksLikeBotAddress(rawText, mentionResult.matched)) {
+        await sendGroupRejectHint({
+          accountId: account.accountId,
+          chatId,
+          client,
+          reason: "disabled",
+          replyMessageId,
+          error,
+        });
+      }
       return;
     }
     if (groupPolicy === "allowlist") {
       const groupAllowed =
         groupAllowFrom.includes(chatId) || groupAllowFrom.includes("*");
       if (!groupAllowed) {
-        log(`sharecrm[${account.accountId}]: 群 ${chatId} 不在白名单中`);
+        log(`sharecrm[${account.accountId}]: group ${chatId} is not allowlisted`);
+        if (looksLikeBotAddress(rawText, mentionResult.matched)) {
+          await sendGroupRejectHint({
+            accountId: account.accountId,
+            chatId,
+            client,
+            reason: "notAllowlisted",
+            replyMessageId,
+            error,
+          });
+        }
         return;
       }
     }
@@ -324,9 +619,69 @@ async function handleInboundMessage(params: {
           messageId,
         },
       });
-      log(`sharecrm[${account.accountId}]: 群消息未命中 mention，忽略 ${chatId}`);
+      log(`sharecrm[${account.accountId}]: group message missing mention, ignoring ${chatId}`);
+      const unmatchedNames = extractAtMentionNames(rawText);
+      if (unmatchedNames.length > 0) {
+        await sendGroupRejectHint({
+          accountId: account.accountId,
+          chatId,
+          client,
+          reason: "missingMention",
+          names: unmatchedNames,
+          replyMessageId,
+          error,
+        });
+      }
       return;
     }
+  }
+
+  const stagedImages = await stageInboundImages({
+    images: data.message?.images,
+    accountId: account.accountId,
+    messageId,
+  });
+  if (stagedImages.failed > 0) {
+    log(`sharecrm[${account.accountId}]: failed to stage ${stagedImages.failed} inbound image(s)`);
+  }
+  const imageMarkdown = stagedImages.markdown;
+  const text = [mentionResult.text, imageMarkdown].filter(Boolean).join("\n") || rawText;
+
+  const ackSettings = resolveAckSettings(channelCfg, isGroup);
+  const progressSettings = resolveProgressSettings(channelCfg, isGroup);
+  const botName = (botFullId?.split(".").pop() ?? botFullId ?? "ShareCRM").trim();
+  const now = Date.now();
+  const lastAckAt = lastAckAtByChat.get(progressKey(account.accountId, chatId)) ?? 0;
+  const shouldAck =
+    ackSettings.enabled &&
+    !isLikelyCommandText(text) &&
+    now - lastAckAt >= ACK_THROTTLE_MS;
+
+  if (shouldAck) {
+    const ackText = renderStatusMessage(pickMessage(ackSettings.messages), {
+      name: senderName || senderId,
+      bot: botName,
+    });
+    if (ackText) {
+      try {
+        await client.sendMessage(chatId, ackText);
+        lastAckAtByChat.set(progressKey(account.accountId, chatId), now);
+      } catch (err) {
+        error(`sharecrm[${account.accountId}]: failed to send ack: ${String(err)}`);
+      }
+    }
+  }
+
+  if (progressSettings.enabled && !isLikelyCommandText(text)) {
+    startChatProgress({
+      accountId: account.accountId,
+      chatId,
+      client,
+      settings: progressSettings,
+      senderName: senderName || senderId,
+      botName,
+      error,
+    });
   }
 
   // 会话路由
@@ -420,6 +775,7 @@ async function handleInboundMessage(params: {
   });
 
   // 构建上下文载荷
+  const firstImage = stagedImages.staged[0];
   const ctxPayload = core.channel.reply.finalizeInboundContext({
     Body: combinedBody,
     BodyForAgent: messageBody,
@@ -441,6 +797,16 @@ async function handleInboundMessage(params: {
     WasMentioned: isGroup ? mentionResult.matched : undefined,
     OriginatingChannel: CHANNEL_ID as any,
     OriginatingTo: to,
+    ...(firstImage
+      ? {
+          MediaPath: firstImage.path,
+          MediaUrl: firstImage.path,
+          MediaType: firstImage.contentType,
+          MediaPaths: stagedImages.staged.map((image) => image.path),
+          MediaUrls: stagedImages.staged.map((image) => image.path),
+          MediaTypes: stagedImages.staged.map((image) => image.contentType),
+        }
+      : {}),
   });
 
   // 构建回复分发器
@@ -455,19 +821,23 @@ async function handleInboundMessage(params: {
         const replyText = payload.text ?? "";
         if (!replyText.trim()) return;
 
+        markFormalReplyStarted(account.accountId, chatId);
+
         // Chunk and send
         for (const chunk of core.channel.text.chunkMarkdownText(replyText, textChunkLimit)) {
-          await client.sendMessage(chatId, chunk);
+          await client.sendMessage(chatId, chunk, {
+            replyMessageId,
+          });
         }
       },
       onError: async (err) => {
-        error(`sharecrm[${account.accountId}] 回复失败: ${String(err)}`);
+        error(`sharecrm[${account.accountId}] reply failed: ${String(err)}`);
       },
       onIdle: async () => {},
       onCleanup: () => {},
     });
 
-  log(`sharecrm[${account.accountId}]: 正在分发给 Agent (session=${effectiveSessionKey})`);
+  log(`sharecrm[${account.accountId}]: dispatching to agent (session=${effectiveSessionKey})`);
 
   const { queuedFinal, counts } = await core.channel.reply.withReplyDispatcher({
     dispatcher,
@@ -494,7 +864,8 @@ async function handleInboundMessage(params: {
     });
   }
 
-  log(`sharecrm[${account.accountId}]: 分发完成 (queuedFinal=${queuedFinal}, replies=${counts.final})`);
+  markFormalReplyStarted(account.accountId, chatId);
+  log(`sharecrm[${account.accountId}]: dispatch complete (queuedFinal=${queuedFinal}, replies=${counts.final})`);
 }
 
 /**
@@ -508,23 +879,18 @@ async function monitorSingleAccount(params: {
 }): Promise<void> {
   const { cfg, account, runtime, abortSignal } = params;
   const { accountId } = account;
-  const log = runtime?.log ?? console.log;
-  const error = runtime?.error ?? console.error;
+  const log = (message: string) => logShareCrm(runtime, "info", message);
+  const error = (message: string) => logShareCrm(runtime, "error", message);
 
   const chatHistories = new Map<string, HistoryEntry[]>();
+  const inboundQueues = new Map<string, Promise<void>>();
 
-  await hydrateDirectChatBindings(accountId, runtime);
-
-  return new Promise<void>((resolve) => {
-    const client = new ShareCrmClient({
-      account,
-      onConnected: (info) => {
-        botInfo.set(accountId, info);
-        log(
-          `sharecrm[${accountId}]: 已连接企信 Bot ${info.botFullId} (protocol=${info.protocolVersion ?? "unknown"}, client=${info.clientVersion ?? "unknown"}, maxLifetime=${info.maxLifetime ?? 0})`,
-        );
-      },
-      onMessage: (event) => {
+  const enqueueInbound = (event: ShareCrmSseEvent & { type: "message" }, client: ShareCrmClient) => {
+    const laneKey = event.data.chat_id || event.data.message_id || "unknown";
+    const previous = inboundQueues.get(laneKey) ?? Promise.resolve();
+    const current = previous
+      .catch(() => undefined)
+      .then(() =>
         handleInboundMessage({
           cfg,
           account,
@@ -532,16 +898,50 @@ async function monitorSingleAccount(params: {
           runtime,
           chatHistories,
           client,
-        }).catch((err) => {
-          error(`sharecrm[${accountId}]: 处理消息时出错: ${String(err)}`);
-        });
+        }),
+      )
+      .catch((err) => {
+        error(`sharecrm[${accountId}]: failed to handle inbound message: ${String(err)}`);
+      });
+
+    inboundQueues.set(laneKey, current);
+    current.finally(() => {
+      if (inboundQueues.get(laneKey) === current) {
+        inboundQueues.delete(laneKey);
+      }
+    });
+  };
+
+  await hydrateDirectChatBindings(accountId, runtime);
+  const lastEventId = await loadLastEventId(accountId).catch((error) => {
+    error(`sharecrm[${accountId}]: failed to load last event id: ${String(error)}`);
+    return null;
+  });
+
+  return new Promise<void>((resolve) => {
+    const client = new ShareCrmClient({
+      account,
+      lastEventId,
+      onConnected: (info) => {
+        botInfo.set(accountId, info);
+        log(
+          `sharecrm[${accountId}]: connected bot ${info.botFullId} (protocol=${info.protocolVersion ?? "unknown"}, client=${info.clientVersion ?? "unknown"}, maxLifetime=${info.maxLifetime ?? 0})`,
+        );
+      },
+      onMessage: (event) => {
+        enqueueInbound(event, client);
       },
       onDisconnected: (reason) => {
         botInfo.delete(accountId);
-        log(`sharecrm[${accountId}]: 已断开连接: ${reason}`);
+        log(`sharecrm[${accountId}]: disconnected: ${reason}`);
       },
       onError: (err) => {
-        error(`sharecrm[${accountId}]: 连接错误: ${String(err)}`);
+        error(`sharecrm[${accountId}]: connection error: ${String(err)}`);
+      },
+      onLastEventId: (eventId) => {
+        persistLastEventId(accountId, eventId).catch((persistError) => {
+          error(`sharecrm[${accountId}]: failed to persist last event id: ${String(persistError)}`);
+        });
       },
       log,
     });
@@ -549,11 +949,13 @@ async function monitorSingleAccount(params: {
     activeClients.set(accountId, client);
 
     const handleAbort = () => {
-      log(`sharecrm[${accountId}]: 收到终止信号，正在停止`);
+      log(`sharecrm[${accountId}]: abort received, stopping`);
       client.disconnect();
       activeClients.delete(accountId);
       botInfo.delete(accountId);
       directChatByUserByAccount.delete(accountId);
+      inboundQueues.clear();
+      clearChatProgress(accountId);
       resolve();
     };
 
@@ -577,13 +979,13 @@ export async function monitorShareCrmProvider(opts: MonitorShareCrmOpts = {}): P
     throw new Error("ShareCRM 监控需要配置参数");
   }
 
-  const log = opts.runtime?.log ?? console.log;
+  const log = (message: string) => logShareCrm(opts.runtime, "info", message);
 
   // 如果指定了 accountId，则只监控该账号
   if (opts.accountId) {
     const account = resolveAccount(cfg, opts.accountId);
     if (!account.enabled || !account.configured) {
-      throw new Error(`ShareCRM 账号 "${opts.accountId}" 未配置或已禁用`);
+      throw new Error(`ShareCRM account "${opts.accountId}" is not configured or disabled`);
     }
     return monitorSingleAccount({
       cfg,
@@ -596,10 +998,10 @@ export async function monitorShareCrmProvider(opts: MonitorShareCrmOpts = {}): P
   // 否则，启动所有已启用的账号
   const accounts = listEnabledAccounts(cfg);
   if (accounts.length === 0) {
-    throw new Error("未找到已启用的 ShareCRM 账号配置");
+    throw new Error("No enabled ShareCRM accounts found");
   }
 
-  log(`sharecrm: 正在启动 ${accounts.length} 个账号: ${accounts.map((a) => a.accountId).join(", ")}`);
+  log(`sharecrm: starting ${accounts.length} accounts: ${accounts.map((a) => a.accountId).join(", ")}`);
 
   await Promise.all(
     accounts.map((account) =>
@@ -639,6 +1041,10 @@ export function stopShareCrmMonitor(accountId?: string): void {
     }
     botInfo.delete(accountId);
     directChatByUserByAccount.delete(accountId);
+    clearChatProgress(accountId);
+    for (const key of [...lastRejectHintAtByChat.keys()]) {
+      if (key.startsWith(`${accountId}:`)) lastRejectHintAtByChat.delete(key);
+    }
   } else {
     for (const client of activeClients.values()) {
       client.disconnect();
@@ -646,5 +1052,12 @@ export function stopShareCrmMonitor(accountId?: string): void {
     activeClients.clear();
     botInfo.clear();
     directChatByUserByAccount.clear();
+    for (const accountKey of [...progressByChat.keys()]) {
+      const current = progressByChat.get(accountKey);
+      if (current?.timer) clearTimeout(current.timer);
+    }
+    progressByChat.clear();
+    lastAckAtByChat.clear();
+    lastRejectHintAtByChat.clear();
   }
 }

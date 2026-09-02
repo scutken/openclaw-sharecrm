@@ -15,10 +15,18 @@
 - 私聊收发消息
 - 按配置接入群聊
 - Gateway 1.3 协议
-- 自动重连
-- 回复消息时保留 `chat_id`
+- 自动重连，并持久化 SSE `Last-Event-ID`
+- 回复消息时保留 `chat_id`，并带上 `reply_message_id`
 - 支持按 `user:<userId>` 发送（前提：插件之前已收到过该用户私聊，已缓存 `chat_id`）
 - `userId -> chatId` 映射会持久化保存，插件重启后仍可继续使用
+
+默认安全策略：
+
+- `dmPolicy=pairing`：未知私聊用户需要审批
+- `groupPolicy=disabled`：默认不接入群聊
+- `requireMention=true`：群聊开启后默认需要 `@Bot`（ID 或 `mentionAliases` 里的企信显示名）
+
+`dmPolicy=open` 只有在 `allowFrom` 包含 `"*"` 时才对所有人开放。
 
 ---
 
@@ -36,8 +44,8 @@
 
 还需要：
 
-- Node.js `20` 或更高
-- 已安装 OpenClaw
+- Node.js `22` 或更高
+- 已安装 OpenClaw `v2026.7.1-2` 或更高版本
 
 ---
 
@@ -45,33 +53,23 @@
 
 ### 方式一：使用 npmmirror 安装（第一推荐）
 
-如果你在国内环境，优先推荐先把 npm 源切到 `npmmirror.com`，再安装插件。
-
-临时使用 npmmirror：
+如果你在国内环境，优先推荐用 npmmirror 安装，不要改全局 npm 源。
 
 ```bash
 npm --registry=https://registry.npmmirror.com install -g openclaw
 openclaw plugins install @openclaw-fs/sharecrm
 ```
 
-如果你已经装好了 OpenClaw，也可以只切换当前 npm 源后再装插件：
-
-```bash
-npm config set registry https://registry.npmmirror.com
-openclaw plugins install @openclaw-fs/sharecrm
-```
-
 升级时：
 
 ```bash
-npm config set registry https://registry.npmmirror.com
-openclaw plugins update @openclaw-fs/sharecrm
+npm --registry=https://registry.npmmirror.com exec -- openclaw plugins update @openclaw-fs/sharecrm
 ```
 
-如果后面要切回官方源：
+如果环境已经能访问 ClawHub，也可以：
 
 ```bash
-npm config set registry https://registry.npmjs.org
+openclaw plugins install clawhub:@openclaw-fs/sharecrm
 ```
 
 ---
@@ -92,6 +90,7 @@ openclaw plugins install ./openclaw-sharecrm-v<version>.zip
 - `dist/sharecrm.js`
 - `openclaw.plugin.json`
 - `README.md`
+- `CHANGELOG.md`
 
 ### 方式三：直接 npm 安装（适合已能稳定访问 npm 的环境）
 
@@ -103,9 +102,9 @@ openclaw plugins install @openclaw-fs/sharecrm
 
 ---
 
-## 从旧版迁移到 V1.3（推荐按这个顺序做）
+## 从旧版迁移到 V1.4（推荐按这个顺序做）
 
-如果你当前装的是 `1.2.x`，推荐优先用 `npmmirror` 完成迁移。
+如果你当前装的是 `1.3.x`，推荐先升级 OpenClaw，再装新插件。
 
 ### 第一步：先检查 OpenClaw 版本
 
@@ -113,7 +112,7 @@ openclaw plugins install @openclaw-fs/sharecrm
 openclaw --version
 ```
 
-V1.3 插件建议配合 `OpenClaw v2026.3.23-2` 或更高兼容版本使用。
+V1.4 插件需要 `OpenClaw v2026.7.1-2` 或更高版本，不再兼容 `2026.3.23-2`。
 
 如果版本过旧，先升级 OpenClaw，再继续下面步骤：
 
@@ -121,13 +120,7 @@ V1.3 插件建议配合 `OpenClaw v2026.3.23-2` 或更高兼容版本使用。
 npm --registry=https://registry.npmmirror.com install -g openclaw@latest
 ```
 
-### 第二步：把 npm 源切到 npmmirror
-
-```bash
-npm config set registry https://registry.npmmirror.com
-```
-
-### 第三步：卸载旧插件目录
+### 第二步：卸载旧插件目录
 
 Linux / macOS：
 
@@ -141,7 +134,7 @@ Windows（PowerShell）：
 Remove-Item "$HOME/.openclaw/extensions/sharecrm" -Recurse -Force
 ```
 
-### 第四步：清理旧插件残留配置
+### 第三步：清理旧插件残留配置
 
 ```bash
 openclaw doctor --fix
@@ -150,7 +143,7 @@ openclaw doctor --fix
 如果你之前已经配置过 `channels.sharecrm`，而这时插件还没重新装回去，`doctor` 可能仍提示配置里有旧残留。
 这种情况下，先重新安装插件，再执行配置校验即可。
 
-### 第五步：安装 V1.3
+### 第四步：安装 V1.4
 
 ```bash
 openclaw plugins install @openclaw-fs/sharecrm
@@ -162,7 +155,7 @@ openclaw plugins install @openclaw-fs/sharecrm
 openclaw plugins install ./openclaw-sharecrm-v<version>.zip
 ```
 
-### 第六步：确认安装成功
+### 第五步：确认安装成功
 
 ```bash
 openclaw plugins inspect sharecrm
@@ -176,13 +169,15 @@ openclaw plugins doctor
 - `openclaw config validate` 通过
 - `openclaw plugins doctor` 没有插件错误
 
-### 第七步：确认 V1.3 行为
+### 第六步：确认 V1.4 行为
 
-V1.3 主要变化：
+V1.4 主要变化：
 
-- Gateway 协议升级到 `1.3`
-- 群聊仍然要求 `@Bot` 才进入 Gateway
-- 但插件现在会接收 Gateway 透传的最近 `10` 条群聊历史，帮助 Agent 正确理解上下文后再回复
+- 默认私聊策略改为 `pairing`
+- `dmPolicy=open` 必须配合 `allowFrom: ["*"]`
+- 群聊仍然默认关闭；开启后默认要求 `@Bot`
+- Gateway 协议仍是 `1.3`
+- 插件会接收 Gateway 透传的最近群聊历史，帮助 Agent 正确理解上下文后再回复
 
 ---
 
@@ -237,7 +232,7 @@ openclaw configure --section channels
   "gatewayBaseUrl": "https://open.fxiaoke.com",
   "appId": "your_app_id",
   "appSecret": "your_app_secret",
-  "dmPolicy": "open"
+  "dmPolicy": "pairing"
 }
 ```
 
@@ -245,7 +240,7 @@ openclaw configure --section channels
 
 ## 常用配置怎么选
 
-### 只接私聊
+### 只接私聊，未知用户先审批
 
 ```json
 {
@@ -253,7 +248,7 @@ openclaw configure --section channels
   "gatewayBaseUrl": "https://open.fxiaoke.com",
   "appId": "your_app_id",
   "appSecret": "your_app_secret",
-  "dmPolicy": "open",
+  "dmPolicy": "pairing",
   "groupPolicy": "disabled"
 }
 ```
@@ -266,9 +261,10 @@ openclaw configure --section channels
   "gatewayBaseUrl": "https://open.fxiaoke.com",
   "appId": "your_app_id",
   "appSecret": "your_app_secret",
-  "dmPolicy": "open",
+  "dmPolicy": "pairing",
   "groupPolicy": "open",
-  "requireMention": true
+  "requireMention": true,
+  "mentionAliases": ["小助手"]
 }
 ```
 
@@ -285,6 +281,40 @@ openclaw configure --section channels
 }
 ```
 
+### 对所有人开放私聊（不推荐）
+
+```json
+{
+  "enabled": true,
+  "gatewayBaseUrl": "https://open.fxiaoke.com",
+  "appId": "your_app_id",
+  "appSecret": "your_app_secret",
+  "dmPolicy": "open",
+  "allowFrom": ["*"]
+}
+```
+
+### 收到消息先确认，长任务再报进度
+
+私聊默认立刻回一条固定确认；如果 Agent 超过 1 分钟还没开始正式回复，再按 1 / 3 / 6 分钟报进度，之后每 3 分钟一条。
+
+```json
+{
+  "ack": {
+    "enabled": true,
+    "messages": "👀已收到，稍后回您！"
+  },
+  "progress": {
+    "enabled": true,
+    "scheduleMs": [60000, 180000, 360000],
+    "repeatMs": 180000,
+    "messages": "⏳仍在工作，已处理 {elapsed}"
+  }
+}
+```
+
+群聊默认只发 Ack。进度文案里的 `{elapsed}` 会替换成已等待时间。若仍配置 `delayMs` + `intervalMs`，则沿用旧的固定间隔算法。
+
 ---
 
 ## 插件现在怎么工作
@@ -297,7 +327,7 @@ openclaw configure --section channels
 Gateway 1.3 下，插件会：
 
 - 建连时带 `version=1.3.0`
-- 记住最近一条事件 `id`，重连时通过 `Last-Event-ID` 带回
+- 记住最近一条事件 `id`，重启和重连时通过 `Last-Event-ID` 带回
 - 遵循服务端下发的 `retry` 重连等待时间
 - 优先读取 `message.content`
 - 保留并复用 `chat_id`
@@ -307,6 +337,8 @@ Gateway 1.3 下，插件会：
 
 - Gateway 的心跳现在使用 **SSE comment**，不会作为业务事件交给插件处理
 - 如果服务端返回 `reset`，表示旧事件游标已经失效，插件会清空本地游标后重新建连，并记录日志提示：此前消息可能未被接收
+- 同一会话的入站消息会按 `chat_id` 串行处理，避免并发回复互相覆盖
+- HTTP 日志会脱敏 `appSecret` / token，不会把密钥打进日志
 
 继续补充：
 
@@ -322,7 +354,7 @@ Gateway 1.3 下，插件会：
 
 1. OpenClaw 能看到 `sharecrm` 插件
 2. 配置完成后，插件能正常启动
-3. 企信给 Bot 发一条私聊消息，Bot 能回复
+3. 企信给 Bot 发一条私聊消息；如果是 `pairing`，先审批，再确认 Bot 能回复
 
 如果你在群里启用了：
 
@@ -377,7 +409,9 @@ openclaw plugins install ./openclaw-sharecrm-v<version>.zip
 
 在企信里给 Bot 发送以下命令：
 
-- `!!`：查看命令列表
+- `/help`：查看 OpenClaw 命令帮助
+- `/status`：查看状态
+- `!!`：旧调试命令列表（不推荐）
 - `!userId`：返回当前用户的 userId
 - `!chatId`：返回当前会话的 chat_id
 
@@ -387,6 +421,20 @@ openclaw plugins install ./openclaw-sharecrm-v<version>.zip
 
 - `groupPolicy` 是否不是 `disabled`
 - 如果开了 `requireMention`，是否真的先 `@Bot`
+- 企信群聊 @ 的是显示名时，把该名字加到 `mentionAliases`，例如 `["小助手"]`
+
+### 6）为什么陌生人私聊没有自动回复？
+
+V1.4 默认 `dmPolicy=pairing`。未知用户会先收到配对码，需要你在 OpenClaw 里审批后才会开始对话。
+
+如果确实要对所有人开放，把策略改成：
+
+```json
+{
+  "dmPolicy": "open",
+  "allowFrom": ["*"]
+}
+```
 
 ---
 

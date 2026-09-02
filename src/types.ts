@@ -2,6 +2,8 @@
  * ShareCRM IM 渠道插件类型定义
  */
 
+import type { ProgressMessageConfig, StatusMessageConfig } from "./status-messages.js";
+
 // ============ SSE 事件类型 ============
 
 /** SSE 连接成功事件 */
@@ -39,6 +41,7 @@ export interface ShareCrmSseMessageEvent {
     message?: {
       type: string;
       content: string;
+      images?: ShareCrmInboundImage[];
     };
     timestamp?: number;
     env?: number;
@@ -50,6 +53,14 @@ export interface ShareCrmSseMessageEvent {
     reply_message_id?: number;
     history_messages?: ShareCrmGatewayHistoryMessage[];
   };
+}
+
+export interface ShareCrmInboundImage {
+  url?: string;
+  filename?: string;
+  width?: number;
+  height?: number;
+  size?: number;
 }
 
 export interface ShareCrmGatewayHistoryMessage {
@@ -134,9 +145,14 @@ export interface ShareCrmChannelConfig {
   groupPolicy?: "open" | "allowlist" | "disabled";
   groupAllowFrom?: (string | number)[];
   requireMention?: boolean;
+  mentionAliases?: (string | number)[];
   chatId?: string;
   historyLimit?: number;
   textChunkLimit?: number;
+  ack?: StatusMessageConfig;
+  progress?: ProgressMessageConfig;
+  groupAck?: StatusMessageConfig;
+  groupProgress?: ProgressMessageConfig;
   accounts?: Record<string, ShareCrmAccountConfigRaw>;
 }
 
@@ -151,8 +167,14 @@ export interface ShareCrmAccountConfigRaw {
   allowFrom?: (string | number)[];
   groupPolicy?: "open" | "allowlist" | "disabled";
   groupAllowFrom?: (string | number)[];
+  requireMention?: boolean;
+  mentionAliases?: (string | number)[];
   historyLimit?: number;
   textChunkLimit?: number;
+  ack?: StatusMessageConfig;
+  progress?: ProgressMessageConfig;
+  groupAck?: StatusMessageConfig;
+  groupProgress?: ProgressMessageConfig;
 }
 
 /** 解析后的完整账号配置 */

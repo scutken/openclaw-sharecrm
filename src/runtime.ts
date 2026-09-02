@@ -11,9 +11,13 @@ export function setShareCrmRuntime(r: PluginRuntime): void {
   runtime = r;
 }
 
+export function tryGetShareCrmRuntime(): PluginRuntime | null {
+  return runtime;
+}
+
 export function getShareCrmRuntime(): PluginRuntime {
   if (!runtime) {
-    throw new Error("ShareCRM 运行时未初始化 - 插件尚未注册");
+    throw new Error("ShareCRM runtime is not initialized");
   }
   return runtime;
 }

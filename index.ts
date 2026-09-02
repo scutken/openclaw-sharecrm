@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { defineChannelPluginEntry, emptyPluginConfigSchema } from "openclaw/plugin-sdk/core";
+import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { shareCrmPlugin } from "./src/channel.js";
 import { isLikelyShareCrmChatId } from "./src/channel.js";
@@ -131,7 +131,6 @@ const plugin = defineChannelPluginEntry({
   id: "sharecrm",
   name: "ShareCRM",
   description: "ShareCRM IM Gateway channel plugin for OpenClaw",
-  configSchema: emptyPluginConfigSchema(),
   plugin: shareCrmPlugin,
   setRuntime: setShareCrmRuntime,
   registerFull(api: OpenClawPluginApi) {
